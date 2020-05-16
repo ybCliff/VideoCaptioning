@@ -1,0 +1,132 @@
+AR1 MSRVTT 29.1
+B4: 40.22	M: 28.05	R: 60.94	C: 46.98
+AR5 MSRVTT 46.1
+B4: 40.56	M: 28.67	R: 60.59	C: 49.08
+AR6 MSRVTT 50.4
+B4: 40.29	M: 28.61	R: 60.30	C: 48.68
+NA nv MSRVTT AE mp 6 1 13.2
+B4: 33.48	M: 25.37	R: 60.21	C: 44.43
+NA nv MSRVTT AE mp 6 2 18.2
+B4: 38.72	M: 27.03	R: 61.03	C: 48.71
+NA nv MSRVTT AE mp 6 3 23.4
+B4: 41.01	M: 28.02	R: 61.68	C: 49.80
+NA nv MSRVTT AE mp 6 4 26.5
+B4: 41.35	M: 28.36	R: 61.91	C: 50.74
+NA nv MSRVTT AE mp 6 5 32.0
+B4: 42.03	M: 28.73	R: 62.20	C: 51.43
+NA nv MSRVTT AE mp 6 6 36.6
+B4: 41.97	M: 28.76	R: 62.09	C: 51.20
+NA nv MSRVTT AE mp 6 7 42.6
+B4: 41.97	M: 28.71	R: 62.02	C: 51.27
+NA mp MSRVTT _ mp 6 1 8.6
+B4: 22.20	M: 22.28	R: 58.10	C: 33.30
+NA mp MSRVTT _ mp 6 2 13.6
+B4: 38.90	M: 27.13	R: 61.16	C: 45.19
+NA mp MSRVTT _ mp 6 3 19.0
+B4: 39.80	M: 27.75	R: 61.78	C: 46.95
+NA mp MSRVTT _ mp 6 4 22.9
+B4: 40.32	M: 28.18	R: 61.66	C: 48.03
+NA mp MSRVTT _ mp 6 5 28.4
+B4: 40.43	M: 27.99	R: 61.55	C: 47.57
+NA mp MSRVTT _ mp 6 6 31.5
+B4: 40.79	M: 28.16	R: 61.51	C: 47.68
+NA mp MSRVTT _ mp 6 7 37.7
+B4: 40.76	M: 28.23	R: 61.37	C: 47.93
+NA nv MSRVTT AE mp 1 5 28.3
+B4: 35.10	M: 26.18	R: 59.70	C: 43.51
+NA nv MSRVTT AE mp 2 5 29.2
+B4: 39.04	M: 27.91	R: 61.19	C: 47.70
+NA nv MSRVTT AE mp 3 5 29.4
+B4: 40.44	M: 28.37	R: 61.79	C: 49.67
+NA nv MSRVTT AE mp 4 5 29.1
+B4: 41.23	M: 28.61	R: 61.94	C: 50.51
+NA nv MSRVTT AE mp 5 5 30.7
+B4: 41.87	M: 28.67	R: 62.12	C: 51.07
+NA nv MSRVTT AE mp 4 4 25.5
+B4: 40.24	M: 28.28	R: 61.61	C: 49.62
+NA nv MSRVTT AE mp 3 3 20.9
+B4: 38.86	M: 27.81	R: 61.31	C: 48.44
+NA nv MSRVTT AE mp 2 2 16.8
+B4: 35.02	M: 26.35	R: 60.07	C: 45.76
+NA nv MSRVTT AE mp 1 1 11.9
+B4: 24.43	M: 23.42	R: 57.84	C: 38.44
+NA nv MSRVTT AE ef 6 4 0 23.1
+B4: 36.76	M: 27.68	R: 60.96	C: 47.39
+NA nv MSRVTT AE ef 6 4 1 26.8
+B4: 37.02	M: 27.68	R: 61.08	C: 47.68
+NA nv MSRVTT AE ef 6 3 0 25.4
+B4: 39.20	M: 28.18	R: 61.51	C: 48.93
+NA nv MSRVTT AE ef 6 3 1 28.7
+B4: 39.50	M: 28.24	R: 61.65	C: 49.55
+NA nv MSRVTT AE ef 6 2 0 31.8
+B4: 40.26	M: 28.64	R: 61.75	C: 50.13
+NA nv MSRVTT AE ef 6 2 1 35.1
+B4: 40.71	M: 28.62	R: 61.91	C: 50.40
+NA nv MSRVTT AE ef 6 1 0 52.8
+B4: 41.35	M: 28.82	R: 61.91	C: 51.47
+NA nv MSRVTT AE ef 6 1 1 55.0
+B4: 41.70	M: 28.81	R: 62.09	C: 51.75
+NA nv MSRVTT AE mp 4 3 21.8
+B4: 39.77	M: 28.06	R: 61.43	C: 48.96
+NA nv MSRVTT AE mp 5 3 24.1
+B4: 40.69	M: 28.05	R: 61.58	C: 49.49
+AR1 Youtube2Text 28.3
+B4: 46.77	M: 34.36	R: 70.89	C: 88.09
+AR5 Youtube2Text 38.7
+B4: 48.69	M: 35.29	R: 71.42	C: 91.81
+AR6 Youtube2Text 40.5
+B4: 48.89	M: 35.31	R: 71.22	C: 91.55
+NA nv Youtube2Text AE mp 6 1 14.2
+B4: 53.91	M: 35.53	R: 73.58	C: 93.40
+NA nv Youtube2Text AE mp 6 2 18.8
+B4: 54.47	M: 36.27	R: 74.02	C: 96.39
+NA nv Youtube2Text AE mp 6 3 21.9
+B4: 54.95	M: 36.14	R: 73.50	C: 95.68
+NA nv Youtube2Text AE mp 6 4 27.1
+B4: 54.93	M: 36.20	R: 73.69	C: 95.72
+NA nv Youtube2Text AE mp 6 5 31.7
+B4: 55.62	M: 36.25	R: 73.86	C: 96.30
+NA nv Youtube2Text AE mp 6 6 35.8
+B4: 55.26	M: 36.15	R: 73.74	C: 96.04
+NA nv Youtube2Text AE mp 6 7 40.1
+B4: 55.73	M: 36.26	R: 73.77	C: 96.56
+NA mp Youtube2Text _ mp 6 1 9.1
+B4: 51.27	M: 34.16	R: 72.08	C: 86.74
+NA mp Youtube2Text _ mp 6 2 12.2
+B4: 53.19	M: 35.07	R: 73.07	C: 90.03
+NA mp Youtube2Text _ mp 6 3 18.2
+B4: 52.56	M: 35.08	R: 72.94	C: 91.58
+NA mp Youtube2Text _ mp 6 4 22.8
+B4: 53.58	M: 35.42	R: 73.30	C: 93.00
+NA mp Youtube2Text _ mp 6 5 28.3
+B4: 53.67	M: 35.46	R: 73.17	C: 92.81
+NA mp Youtube2Text _ mp 6 6 33.1
+B4: 54.02	M: 35.59	R: 73.41	C: 93.19
+NA mp Youtube2Text _ mp 6 7 37.8
+B4: 53.91	M: 35.63	R: 73.36	C: 92.84
+NA nv Youtube2Text AE mp 1 1 13.0
+B4: 43.91	M: 32.99	R: 71.13	C: 82.29
+NA nv Youtube2Text AE mp 2 1 12.3
+B4: 46.39	M: 34.22	R: 72.06	C: 86.54
+NA nv Youtube2Text AE mp 3 1 12.4
+B4: 48.30	M: 34.75	R: 72.60	C: 90.87
+NA nv Youtube2Text AE mp 4 1 13.2
+B4: 49.94	M: 35.11	R: 72.83	C: 93.16
+NA nv Youtube2Text AE mp 5 1 12.3
+B4: 51.07	M: 35.21	R: 73.21	C: 94.27
+NA nv Youtube2Text AE ef 6 4 0 19.6
+B4: 51.62	M: 35.70	R: 73.36	C: 93.79
+NA nv Youtube2Text AE ef 6 4 1 22.5
+B4: 52.28	M: 35.92	R: 73.68	C: 94.26
+NA nv Youtube2Text AE ef 6 3 0 21.8
+B4: 52.55	M: 35.82	R: 73.57	C: 94.96
+NA nv Youtube2Text AE ef 6 3 1 27.3
+B4: 53.07	M: 35.95	R: 73.90	C: 94.97
+NA nv Youtube2Text AE ef 6 2 0 27.9
+B4: 54.15	M: 36.30	R: 73.81	C: 96.47
+NA nv Youtube2Text AE ef 6 2 1 31.5
+B4: 55.32	M: 36.30	R: 73.83	C: 96.04
+NA nv Youtube2Text AE ef 6 1 0 41.4
+B4: 54.70	M: 36.09	R: 73.49	C: 96.12
+NA nv Youtube2Text AE ef 6 1 1 45.5
+B4: 55.68	M: 36.30	R: 73.88	C: 96.18
