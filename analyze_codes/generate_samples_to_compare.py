@@ -76,12 +76,12 @@ def run_all(args, vid, sents):
     fig = plt.gcf()
     fig.set_size_inches(7, 4)
     fontsize = 12
-    f.text(0.12, 0.36, 'GT  : ' + sents[0], fontsize=fontsize)
-    f.text(0.12, 0.28, 'NA2E: ' + sents[1], fontsize=fontsize)
-    f.text(0.12, 0.20, 'NA-B: ' + sents[2], fontsize=fontsize)
-    f.text(0.12, 0.12, 'AR-B: ' + sents[3], fontsize=fontsize)
-    f.text(0.12, 0.04, 'AR-B2: ' + sents[4], fontsize=fontsize)
-    f.text(0.12, 0.8, 'Attr: ' + sents[5], fontsize=fontsize)
+    f.text(0.12, 0.33, 'GT  : ' + sents[0], fontsize=fontsize)
+    f.text(0.12, 0.24, 'NA2E: ' + sents[1], fontsize=fontsize)
+    f.text(0.12, 0.15, 'NA-B: ' + sents[2], fontsize=fontsize)
+    f.text(0.12, 0.06, 'AR-B: ' + sents[3], fontsize=fontsize)
+    #f.text(0.12, 0.04, 'AR-B2: ' + sents[4], fontsize=fontsize)
+    f.text(0.12, 0.8, 'Attr: ' + sents[4], fontsize=fontsize)
 
 
     #plt.show()
@@ -102,11 +102,11 @@ def main(args):
         args.examples_pth += '_all'
         candidate = sorted(keylist)
     else:
-        candidate = np.random.choice(keylist, 1)
+        candidate = np.random.choice(keylist, 400)
 
     gts = pickle.load(open("/home/yangbang/VideoCaptioning/MSRVTT/msrvtt_refs.pkl", 'rb'))
     ar = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/AR_topk_collect_results/msrvtt_1.pkl", 'rb'))
-    ar2 = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/AR_topk_collect_results/msrvtt_1_ag.pkl", 'rb'))
+    #ar2 = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/AR_topk_collect_results/msrvtt_1_ag.pkl", 'rb'))
     for key in candidate:
         if os.path.exists(os.path.join(args.examples_pth, '%s.jpg'%key)):
             continue
@@ -116,7 +116,7 @@ def main(args):
         sents.append(captions[1][key][-1])
         if args.all: 
             sents.append(ar[key][0]['caption'])
-            sents.append(ar2[key][0]['caption'])
+            #sents.append(ar2[key][0]['caption'])
             sents.append(captions[0][key][0].replace('<mask>', '<m>'))
             run_all(args, key, sents)
         else:

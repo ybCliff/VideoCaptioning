@@ -1,10 +1,14 @@
 import json, os
 import pickle
-def compare(d1, d2, t='CIDEr'):
+import numpy as np
+def compare(d1, d2, t='CIDEr', keys=None):
   assert d1.keys() == d2.keys()
   c1, c2, c3 = 0, 0, 0
-  total = len(d1.keys())
-  for k in d1.keys():
+  if keys is None:
+  	keys = d1.keys()
+  
+  total = len(keys)
+  for k in keys:
     if d1[k][t] > d2[k][t]:
       c1 += 1
     elif d1[k][t] == d2[k][t]:
@@ -19,9 +23,10 @@ d2 = json.load(open("/home/yangbang/VideoCaptioning/ARVC/nab_mp_b6i5_135.json", 
 d3 = json.load(open("/home/yangbang/VideoCaptioning/ARVC/arb_b5.json", 'r'))
 d4 = json.load(open("/home/yangbang/VideoCaptioning/ARVC/arb2_b5.json", 'r'))
 
-compare(d1, d2, 'Bleu_4')
-compare(d1, d3, 'Bleu_4')
-compare(d1, d4, 'Bleu_4')
+metric = 'CIDEr'
+compare(d1, d2, metric)
+compare(d1, d3, metric)
+compare(d1, d4, metric)
 
 
 def compare2(d1, d2, d3, d4=None):
@@ -43,6 +48,53 @@ def compare2(d1, d2, d3, d4=None):
           c1 += 1
   print(c1/total)
   return target
+
+target = compare2(d1, d2, d3)
+print(len(target))
+
+remain = []
+for k in d1.keys():
+	if k not in target:
+		remain.append(k)
+
+#candidate = np.random.choice(target, 100).tolist()
+#candidate += np.random.choice(remain, 400).tolist()
+
+candidate = []
+for i in range(60):
+	while True:
+		res = np.random.choice(remain, 1).tolist()[0]
+		if (res+'.jpg') in os.listdir('qualitative_examples_target500'):
+			continue
+		else:
+			break
+	candidate.append(res)
+
+
+#op = 'python generate_samples_to_compare.py --all --target %s'%(' '.join(candidate))
+#os.system(op)
+
+
+
+a, _ = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/iterative_collect_results/MSRVTT_nv_AEmp_i5b6a135.pkl", 'rb'))
+b, _ = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/iterative_collect_results/MSRVTT_mp_mp_i5b6a135.pkl", 'rb'))
+c = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/AR_topk_collect_results/msrvtt_1.pkl", 'rb'))
+pth = 'qualitative_examples_target500'
+repeated = 0
+keys = []
+#for f in os.listdir(pth):
+#	key = f.split('.')[0]
+for key in a.keys():
+	keys.append(key)
+	#if a[key][-1] == b[key][-1]:
+	if a[key][-1] == c[key][0]['caption']:
+		repeated += 1
+print('repeated', repeated/len(os.listdir(pth)), repeated/len(a.keys()))
+#compare(d1, d2, keys=keys)
+#compare(d1, d3, keys=keys)
+
+
+'''
 mp, mp_s = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/iterative_collect_results/MSRVTT_nv_AEmp_i5b6a135.pkl", 'rb'))
 mpa, _ = pickle.load(open("/home/yangbang/VideoCaptioning/ARVC/iterative_collect_results/all/MSRVTT_nv_mp_i5b6a135.pkl", 'rb'))
 
@@ -83,3 +135,4 @@ for k in keylist:
   length = len(mp[k][-1].split(' '))
   s = find_(mpa[k], length)
   print(k, length, mp[k][-1], s, nab[k][-1])
+'''
