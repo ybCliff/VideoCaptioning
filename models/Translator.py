@@ -103,6 +103,33 @@ class Translator(object):
             all_hyp += [hyps]
         return all_hyp, all_scores
 
+    def collect_hypothesis_and_scores_bd(self, inst_dec_beams, n_best, enc_output, category):
+        max_len = self.opt['max_len']
+        all_hyp, all_scores = [], []
+        for inst_idx in range(len(inst_dec_beams)):
+            scores, tk = inst_dec_beams[inst_idx].sort_finished(self.opt.get('beam_alpha', 1.0))
+            _n_best = len(scores)
+            all_scores += [scores[:_n_best]]
+            hyps =  [inst_dec_beams[inst_idx].get_hypothesis_from_tk(t, k) for t, k in tk[:_n_best]]
+            hyps = [[Constants.BOS] + item[:-1] + [Constants.PAD] * (max_len - len(item)) for item in hyps] 
+            all_hyp += [hyps]
+        
+        input_data = torch.LongTensor(all_hyp).to(self.device)
+        bsz, beam_size, _ = input_data.shape
+        input_data = input_data.view(bsz*beam_size, -1)
+        print(category.shape)
+        logit, *_ = self.model.beam_decoder(
+            tgt_seq=input_data, 
+            category=category,
+            enc_output=enc_output
+            )
+        logit = logit.view(bsz, beam_size, 2)[:, :, 1]
+        ind = logit.max(1)[1]
+
+        tmp = input_data.view(bsz, beam_size, max_len).gather(1, ind.unsqueeze(1).unsqueeze(2).repeat(1, 1, max_len))[:, :, 1:]
+        return tmp.tolist(), []
+
+
     def translate_batch_ARFormer(self, encoder_outputs, category):
         ''' Translation work in one batch '''
 
@@ -162,6 +189,9 @@ class Translator(object):
             enc_output = enc_output.repeat(1, n_bm, 1).view(n_inst * n_bm, len_s, d_h)
             category = category.repeat(1, n_bm).view(n_inst * n_bm, 1)
 
+            e=enc_output.clone()
+            c=category.clone()
+
             attribute = encoder_outputs.get(Constants.mapping['attr'][0], None)
             if attribute is not None: attribute = attribute.unsqueeze(1).repeat(1, n_bm, 1).view(n_inst * n_bm, -1)
 
@@ -184,7 +214,10 @@ class Translator(object):
                 enc_output, category, inst_idx_to_position_map, attribute = self.collate_active_info(
                     enc_output, inst_idx_to_position_map, active_inst_idx_list, category, n_bm, tag=attribute)
 
-        batch_hyp, batch_scores = self.collect_hypothesis_and_scores(inst_dec_beams, self.opt.get("topk", 1))
+        if self.opt.get('use_beam_decoder', False):
+            batch_hyp, batch_scores = self.collect_hypothesis_and_scores_bd(inst_dec_beams, self.opt.get("topk", 1), e, c)
+        else:
+            batch_hyp, batch_scores = self.collect_hypothesis_and_scores(inst_dec_beams, self.opt.get("topk", 1))
 
         return batch_hyp, batch_scores
 

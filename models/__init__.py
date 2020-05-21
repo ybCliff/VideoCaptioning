@@ -1,7 +1,7 @@
 
 from .seq2seq import Seq2Seq
 from .rnn import Hierarchical_Encoder#Encoder_Baseline, LSTM_Decoder
-from .bert import BertEncoder, BertDecoder, NVADecoder, DirectDecoder, APDecoder, SignalDecoder, Signal3Decoder, Signal2Decoder, NVDecoder, MSDecoder, ARDecoder_with_attribute_generation
+from .bert import BertEncoder, BertDecoder, NVADecoder, DirectDecoder, APDecoder, SignalDecoder, Signal3Decoder, Signal2Decoder, NVDecoder, MSDecoder, ARDecoder_with_attribute_generation, BeamDecoder
 from .bert_pytorch import BertDecoder as BD
 from .decoder import LSTM_Decoder, LSTM_GCC_Decoder, LSTM_Decoder_2stream, Top_Down_Decoder
 from .encoder import Encoder_Baseline, Progressive_Encoder, SVD_Encoder, Input_Embedding_Layer, Semantics_Enhanced_IEL, HighWay_IEL, Encoder_HighWay, LEL
@@ -170,6 +170,11 @@ def get_decoder(opt):
             decoder = MSDecoder(config=opt)
     return decoder
 
+def get_beam_decoder(opt, embedding):
+    if opt.get('use_beam_decoder', False):
+        return BeamDecoder(opt, embedding)
+    return None
+
 def get_model(opt):
     modality = opt['modality'].lower()
     input_size = []
@@ -190,7 +195,8 @@ def get_model(opt):
 
     if len(opt['crit']) == 1:
         # only the main task: language generation
-        assert opt['crit'][0] == 'lang'
+        if not opt.get('use_beam_decoder', False):
+            assert opt['crit'][0] == 'lang'
 
 
     have_auxiliary_tasks = sum([(1 if item not in ['lang', 'tag'] else 0) for item in opt['crit']])
@@ -198,6 +204,7 @@ def get_model(opt):
 
     decoder = get_decoder(opt)
     tgt_word_prj = nn.Linear(opt["dim_hidden"], opt["vocab_size"], bias=False)
+    beam_decoder = get_beam_decoder(opt, decoder.embedding)
 
     model = Seq2Seq(
         preEncoder = preEncoder,
@@ -206,6 +213,7 @@ def get_model(opt):
         auxiliary_task_predictor = auxiliary_task_predictor,
         decoder = decoder,
         tgt_word_prj = tgt_word_prj,
+        beam_decoder = beam_decoder,
         opt = opt
         )
     return model

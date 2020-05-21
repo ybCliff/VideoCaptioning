@@ -96,6 +96,29 @@ class CrossEntropyLoss(nn.Module):
             return torch.sum(loss * mask) / batch_size
         return torch.sum(loss) / batch_size
 
+class BDLoss(nn.Module):
+    def __init__(self):
+        super(BDLoss, self).__init__()
+        self.loss_fn = nn.NLLLoss(reduce=False)
+
+    def forward(self, logits, target):
+        """
+        logits: shape of [batch_size, vocab_size]
+        target: shape of [batch_size, 1]
+        """
+        batch_size = logits.shape[0]
+        logits = logits.contiguous().view(-1, logits.shape[-1])
+        target = target.contiguous().view(-1)
+
+        weight = target.clone().abs()
+
+        target = target.gt(0).long()
+
+
+        loss = self.loss_fn(logits, target)
+
+        return torch.sum(loss * weight.float()) / batch_size
+
 class DistillationLoss(nn.Module):
     def __init__(self, ignore_index):
         super(DistillationLoss, self).__init__()
@@ -153,6 +176,7 @@ class Criterion(object):
         self.names = names
         self.scales = scales
         self.calculate_word_acc = calculate_word_acc
+        self.calculate_classify_acc = 1 if opt.get('use_beam_decoder', False) else 0
         self.opt = opt
 
         self.bow_index = -1
@@ -168,6 +192,7 @@ class Criterion(object):
         # before training a epoch
         self.loss_recorder = [AverageMeter() for _ in range(self.num_loss)]
         self.word_acc_recorder = [AverageMeter() for _ in range(self.calculate_word_acc)]
+        self.classify_acc_recorder = [AverageMeter() for _ in range(self.calculate_classify_acc)]
 
     def check_and_cal(self, pred, gt, crit):
         if isinstance(pred, list):
@@ -233,7 +258,15 @@ class Criterion(object):
                             (predict_res==target_res).sum().item(), 
                             predict_res.size(0), 
                             multiply=False
-                    )                    
+                    )
+
+    def cal_classify_acc(self, pred, gt):
+        for i, (p, g) in enumerate(zip(pred, gt)):
+            self.classify_acc_recorder[i].update(
+                            (p.max(dim=-1)[1] == g.long()).sum().item(), 
+                            p.size(0), 
+                            multiply=False
+                    )
 
     def get_loss(self, results, epoch=-1):
         # input:
@@ -273,6 +306,9 @@ class Criterion(object):
             if self.calculate_word_acc:
                 self.check_and_cal_word_acc(results[Constants.mapping['lang'][0]], results[Constants.mapping['lang'][1]])
 
+            if self.calculate_classify_acc:
+                self.cal_classify_acc([results[Constants.mapping['beam'][0]]], [results[Constants.mapping['beam'][1]]])
+
         # loss = loss1 * scale1 + loss2 * scale2 + ...    
         loss = torch.stack(loss, dim=0).sum(0)
         return loss
@@ -287,6 +323,9 @@ class Criterion(object):
         if self.calculate_word_acc:
             names = self.names + ['Word Acc%d' % i for i in range(self.calculate_word_acc)]
             loss_info = loss_info + [meter.avg for meter in self.word_acc_recorder]
+        elif self.calculate_classify_acc:
+            names = self.names + ['Classify Acc%d' % i for i in range(self.calculate_classify_acc)]
+            loss_info = loss_info + [meter.avg for meter in self.classify_acc_recorder]
         else:
             names = self.names
         return names, loss_info # e.g., CAP_LOSS: 0.1
@@ -302,7 +341,8 @@ def get_criterion(opt):
         'bow': BagOfWordsLoss(ignore_index=Constants.PAD),
         'attr': nn.BCELoss(),
         'attr2': AttributeLoss(),
-        'dist': DistillationLoss(ignore_index=Constants.PAD)
+        'dist': DistillationLoss(ignore_index=Constants.PAD), # bert distillation
+        'beam': BDLoss(), #nn.NLLLoss(),  # beam candidate classification
     }
     if opt.get('bow_loss', False):
         opt['crit'].append('bow')
@@ -335,7 +375,7 @@ def get_criterion(opt):
             calculate_word_acc = 2
     else:
         if opt['method'] == 'ag':
-            calculate_word_acc = 2
+            calculate_word_acc = 2 if not opt.get('use_beam_decoder', False) else 0
         else:
             calculate_word_acc = 0
 

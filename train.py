@@ -7,7 +7,7 @@ import torch.optim as optim
 import misc.utils as utils
 from misc.logger import CsvLogger
 from models import get_model
-from misc.run import train_network_all
+from misc.run import train_network_all,train_beam_decoder
 
 from torch.utils.data import DataLoader
 from misc.cocoeval import suppress_stdout_stderr, COCOScorer
@@ -119,6 +119,28 @@ def get_scope2(opt):
 
     return '_'.join(scope)
 
+def print_information(opt, model, model_name):
+    print(model)
+    print('| model {}'.format(model_name))
+    print('| num. model params: {} (num. trained: {})'.format(
+        sum(p.numel() for p in model.parameters()),
+        sum(p.numel() for p in model.parameters() if p.requires_grad),
+    ))
+    print('use trigger: %d' % opt.get('use_trigger', 0))
+    print('trigger level: %g' % opt.get('trigger_level', 0.25))
+    print('dataloader random type: %s' % opt.get('random_type', 'segment_random'))
+    print('k best model: %d' % opt.get('k_best_model', 10))
+    print('teacher prob: %g' % opt.get('teacher_prob', 1.0))
+    print('save model limit: %d' % opt.get('save_model_limit', -1))
+    print('modality: %s' % opt.get('modality', 'ic'))
+    print('equally sampling: %s' % opt.get('equally_sampling', False))
+    print('n frames: %d' % opt['n_frames'])
+    print('start eval epoch: %d' % opt['start_eval_epoch'])
+    print('save_checkpoint_every: %d' % opt['save_checkpoint_every'])
+    print('max_len: %d' % opt['max_len'])
+    print('scheduled_sampling: {}'.format(opt['scheduled_sampling']))
+    print('vocab_size: %d' % opt['vocab_size'])
+
 def main(opt):
     if opt.get('seed', -1) == -1:
         opt['seed'] = random.randint(1, 65534)
@@ -169,32 +191,34 @@ def main(opt):
     print('save opt details to %s' % (opt_json))
 
     model = get_model(opt)
-
-    print(model)
-    print('| model {}'.format(model_name))
-    print('| num. model params: {} (num. trained: {})'.format(
-        sum(p.numel() for p in model.parameters()),
-        sum(p.numel() for p in model.parameters() if p.requires_grad),
-    ))
-    print('use trigger: %d' % opt.get('use_trigger', 0))
-    print('trigger level: %g' % opt.get('trigger_level', 0.25))
-    print('dataloader random type: %s' % opt.get('random_type', 'segment_random'))
-    print('k best model: %d' % opt.get('k_best_model', 10))
-    print('teacher prob: %g' % opt.get('teacher_prob', 1.0))
-    print('save model limit: %d' % opt.get('save_model_limit', -1))
-    print('modality: %s' % opt.get('modality', 'ic'))
-    print('equally sampling: %s' % opt.get('equally_sampling', False))
-    print('n frames: %d' % opt['n_frames'])
-    print('start eval epoch: %d' % opt['start_eval_epoch'])
-    print('save_checkpoint_every: %d' % opt['save_checkpoint_every'])
-    print('max_len: %d' % opt['max_len'])
-    print('scheduled_sampling: {}'.format(opt['scheduled_sampling']))
-    print('vocab_size: %d' % opt['vocab_size'])
-    
-    
     device = torch.device('cuda' if not opt['no_cuda'] else 'cpu')
     
-    train_network_all(opt, model, device, first_evaluate_whole_folder=opt['first_evaluate_whole_folder'])
+    '''517 yb'''
+    if opt.get('use_beam_decoder', False):
+        assert opt['load_pretrained']
+        checkpoint = torch.load(opt['load_pretrained'])['state_dict']
+        
+        # make sure that current network is the same as the pretrained model
+        #namelist = [item for item, _ in model.named_parameters()]
+        #print(namelist)
+        #for k in checkpoint.keys():
+        #    if 'bn' in k: 
+        #        continue
+        #    print(k)
+        #    assert k in namelist
+        model.load_state_dict(checkpoint, strict=False)
+
+        # we only train beam decoder
+        for name, parameter in model.named_parameters():
+            if 'beam' not in name:
+                parameter.requires_grad = False
+
+        print_information(opt, model, model_name)
+        train_beam_decoder(opt, model, device, first_evaluate_whole_folder=opt['first_evaluate_whole_folder'])
+    else:
+        print_information(opt, model, model_name)
+        train_network_all(opt, model, device, first_evaluate_whole_folder=opt['first_evaluate_whole_folder'])
+
 
 
 if __name__ == '__main__':

@@ -154,16 +154,16 @@ if __name__ == '__main__':
 	hyp3 = pickle.load(open('../AR_topk_collect_results/msvd_5.pkl', 'rb'))
 	'''
 	gts = pickle.load(open("/home/yangbang/VideoCaptioning/MSRVTT/msrvtt_refs.pkl", 'rb'))
-	hyp = pickle.load(open('../iterative_collect_results/all/MSRVTT_nv_AEmp_i5b5a114.pkl', 'rb'))[0]
-	hyp2 = pickle.load(open('../iterative_collect_results/all/MSRVTT_mp_mp_i5b5a114.pkl', 'rb'))[0]
+	hyp = pickle.load(open('../iterative_collect_results/all/MSRVTT_nv_AEmp_i5b5a135.pkl', 'rb'))[0]
+	hyp2 = pickle.load(open('../iterative_collect_results/all/MSRVTT_mp_mp_i5b5a135.pkl', 'rb'))[0]
 	hyp3 = pickle.load(open('../AR_topk_collect_results/msrvtt_5.pkl', 'rb'))
 
 
 
-	#tags_hyp = load_tags(hyp, hyp.keys(), with_key=False)
+	tags_hyp = load_tags(hyp, hyp.keys(), with_key=False)
 	tags_hyp2 = load_tags(hyp2, hyp.keys(), with_key=False)
-	#tags_hyp3 = load_tags(hyp3, hyp.keys(), with_key=True)
-	#tags_gts, freq = load_tags(gts, hyp.keys(), with_key=True, frequency=True)
+	tags_hyp3 = load_tags(hyp3, hyp.keys(), with_key=True)
+	tags_gts, freq = load_tags(gts, hyp.keys(), with_key=True, frequency=True)
 	print(tags_hyp2['video8335'])
 	'''
 	calculate_F1(tags_gts, tags_hyp, freq)
@@ -186,8 +186,9 @@ if __name__ == '__main__':
 		res[k] = f1[k] - f2[k]
 	res = sorted(res.items(), key=lambda d: d[1])[::-1]
 
-	for item in res[:200]:
+	for item in res[:200][::-1]:
 		print(item)
 		print(tags_hyp[item[0]])
+		print(tags_hyp2[item[0]])
 		print(tags_hyp3[item[0]])
 	#print(res[:10])

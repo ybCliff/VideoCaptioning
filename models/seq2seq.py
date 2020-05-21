@@ -14,6 +14,7 @@ class Seq2Seq(nn.Module):
                 auxiliary_task_predictor=None, 
                 decoder=None, 
                 tgt_word_prj=None, 
+                beam_decoder=None,
                 opt={}
             ):
         super(Seq2Seq, self).__init__()
@@ -57,6 +58,7 @@ class Seq2Seq(nn.Module):
                 )
         else:
             self.attribute_predictor = None
+        self.beam_decoder = beam_decoder
 
 
     def encode(self, feats, semantics=None):
@@ -91,6 +93,9 @@ class Seq2Seq(nn.Module):
         return results
 
     def forward(self, **kwargs):
+        if self.opt.get('use_beam_decoder', False):
+            return self.forward_beam_decoder(kwargs)
+
         func_mapping = {
             'LSTM': self.forward_LSTM,
             'ARFormer': self.forward_ARFormer,
@@ -321,6 +326,33 @@ class Seq2Seq(nn.Module):
 
         return {'seq_probs': outputs}
 
+    def forward_beam_decoder(self, kwargs):
+        """
+            1.  tgt_tokens是描述模型beam search得到的结果 
+                [cls] [a] ... [singing] [pad] ... [pad]
+            2.  将tgt_tokens输入到beam_decoder中
+                得到该句子的置信度logit([cls]标签对应的隐状态映射成1维数据的sigmoid输出)
+            3.  ground-truth标签是由单句子的CIDEr METEOR决定
+                比如，beam search top-k = 5，令2个指标最高的句子标签为1，其余为0
+        """
+        tgt_tokens, category, feats = map(
+            lambda x: kwargs[x], 
+            ["tgt_tokens", "category", "feats"]
+        )
+
+        if self.opt.get('bd_load_feats', False):
+            encoder_outputs = self.encode(feats)['enc_output']
+        else:
+            encoder_outputs = None
+
+
+        logit, *_ = self.beam_decoder(
+            tgt_seq=tgt_tokens, 
+            category=category,
+            enc_output=encoder_outputs
+            )
+
+        return {Constants.mapping['beam'][0]: logit}
 
 
 class GELU(nn.Module):

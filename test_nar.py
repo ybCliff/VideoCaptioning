@@ -493,13 +493,17 @@ if __name__ == "__main__":
 
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv_ei2_w08/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2/",
-                "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_mp0.35_0.9/",
+                #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_mp0.35_0.9/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC0_MI_nv08_ei2/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_beta035_090/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC0_MI_nv08_ei2_beta035_090/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_noun/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_verb/",
                 #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_reverse/",
+                #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_nv_adj/",
+                #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_nv_adv/",
+                #"/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_nv_adj_adv/",
+                "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_NARFormer/EBN1_NDL1_WC20_MI_nv08_ei2_beta035_090_n_adj/",
 
                 "/home/yangbang/VideoCaptioning/0219save/VATEX/IEL_NARFormer/EBN1_NDL1_WC0_M_nv_ei2_w08/",
                 "/home/yangbang/VideoCaptioning/0219save/Youtube2Text/IEL_NARFormer/EBN1_NDL1_WC0_I_nv_ei2/",
@@ -523,13 +527,17 @@ if __name__ == "__main__":
 
                 #'0041_099560_141436_166370_171335_175096_175373.pth.tar',
                 #"0049_099603_151397_167075_171060_178066_174592.pth.tar",
-                "0027_099736_153026_167039_170898_177000_175692.pth.tar",
+                #"0027_099736_153026_167039_170898_177000_175692.pth.tar",
                 #"0031_099399_154607_165454_171273_174564_171729.pth.tar",
                 #"0048_100000_157487_168288_172855_177611_172560.pth.tar",
                 #"0046_099271_156077_166886_172315_173689_172102.pth.tar",
                 #"0047_098275_148785_163007_171671_177010_173522.pth.tar",
                 #"0022_099576_135114_156339_164823_172876_168686.pth.tar",
                 #"0039_098986_143613_162035_168945_172163_170912.pth.tar",
+                #"0048_099386_156248_169262_174243_179032_174974.pth.tar",
+                #"0044_098939_150599_165856_170319_177109_173043.pth.tar",
+                #"0027_099517_156220_168231_173442_176587_173837.pth.tar",
+                "0045_099813_149392_165840_171919_175234_174865.pth.tar",
                 
                 '0067_149417_051040.pth.tar',
                 '0021_098668_219703_225013_227193_228162_222878.pth.tar',
@@ -662,4 +670,5 @@ if __name__ == "__main__":
 CUDA_VISIBLE_DEVICES=0 python test_nar.py --index 1 -em test -nd -paradigm mp -i 5 -beam_alpha 1.15 -s 100 -collect
 CUDA_VISIBLE_DEVICES=3 python test_nar.py --index 0 -em test -nd -paradigm mp -i 5 -s 100 -collect -nobc -ca Youtube2Text_nv_AEmp_i5b5a100.pkl
 CUDA_VISIBLE_DEVICES=3 python test_nar.py --index 0 -em test -nd -paradigm mp -i 5 -collect -nobc -ca Youtube2Text_mp_mp_i5b5a100.pkl
+CUDA_VISIBLE_DEVICES=0 python test_nar.py --index 1 -em test -nd -paradigm mp -i 5 -beam_alpha 1.35 -s 100 -lbs 6 -collect
 '''

@@ -1669,12 +1669,12 @@ class NV(object):
             if self.collect_best_candidate_iterative_results and not self.collect_last:
                 collect_results.append(tgt_tokens.clone())
 
-                if counter == iterations - 1:
-                    corresponding_probs = self.scoring_by_teacher(teacher_model, teacher_enc_output, category, tgt_tokens, decision=(not self.no_candidate_decision))
-                    corresponding_probs[pad_mask] = 1.0
-                    collect_scores.append((token_probs * corresponding_probs).clone())
-                else:
-                	collect_scores.append(token_probs.clone())
+                #if counter == iterations - 1:
+                #    corresponding_probs = self.scoring_by_teacher(teacher_model, teacher_enc_output, category, tgt_tokens, decision=(not self.no_candidate_decision))
+                #    corresponding_probs[pad_mask] = 1.0
+                #    collect_scores.append((token_probs * corresponding_probs).clone())
+                #else:
+                collect_scores.append(token_probs.clone())
 
 
         if self.collect_last:
@@ -1789,7 +1789,7 @@ class NV(object):
         
         if self.scale == 100:
             tgt_tokens, token_probs, visual_mask = self.separation_integration(model, enc_output, category, tgt_tokens, pad_mask, tgt_vocab, tags)
-            #visual_mask = tgt_tokens.ne(Constants.MASK)
+            visual_mask = tgt_tokens.ne(Constants.MASK) & non_pad_mask
         else:
             token_probs = tgt_tokens.new(*tgt_tokens.shape).fill_(0).float()
             token_probs[pad_mask] = 1.0
@@ -1848,9 +1848,12 @@ class NV(object):
                 collect_scores.append(token_probs.clone())
 
         for i in range(self.iterations):
-            refine_ratio = 0.4 * (1.0 - (i / self.iterations))
-            num_mask = (seq_lens.float() * refine_ratio).long()
-            mask_ind = self.select_worst(token_probs, num_mask)
+            if i == 0 and visual_mask is not None:
+                mask_ind = visual_mask
+            else:
+                refine_ratio = 0.4 * (1.0 - (i / self.iterations))
+                num_mask = (seq_lens.float() * refine_ratio).long()
+                mask_ind = self.select_worst(token_probs, num_mask)
 
             tgt_tokens[mask_ind] = Constants.MASK
             new_tgt_tokens, new_token_probs = self.generate_non_autoregressive(

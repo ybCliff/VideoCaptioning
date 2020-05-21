@@ -30,6 +30,8 @@ mapping = {
     'attr': ('pred_attr', 'attribute'),
     'dist': ('pred_embs', 'bert_embs'),
     'attr2': ('pred_attr2', 'attribute'),
+
+    'beam': ('pred_beam', 'beam'),  #用于beam candidate selection
 }
 '''
 EOS = 0

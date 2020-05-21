@@ -14,7 +14,7 @@ import json
 import pandas as pd
 from misc.cocoeval import suppress_stdout_stderr, COCOScorer, COCOBLEUScorer
 import misc.utils as utils
-from dataloader import VideoDataset
+from dataloader import VideoDataset, BD_Dataset
 
 
 import math, random
@@ -199,8 +199,38 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
     return results
 
 
-def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1):
-    dataset = VideoDataset(opt, mode, print_info, specific=specific, target_ratio=target_ratio)
+def get_forword_results_bd(opt, model, data, device, only_data=False, vocab=None):
+    bd_load_feats = opt.get('bd_load_feats', False)
+    if bd_load_feats:
+        tgt_tokens, labels, category, feats_i, feats_m, feats_a = map(lambda x: x.to(device), data)
+        mapping = {
+            'i': feats_i,
+            'm': feats_m,
+            'a': feats_a
+        }
+        
+        modality = opt['modality'].lower()
+
+        feats = []
+        for char in modality:
+            assert char in ['i', 'm', 'a']
+            feats.append(mapping[char])
+    else:
+        tgt_tokens, labels, category = map(lambda x: x.to(device), data)
+        feats=None
+
+    results = model(
+        feats=feats,
+        tgt_tokens=tgt_tokens, 
+        category=category,
+        opt=opt
+        )
+    results[Constants.mapping['beam'][1]] = labels.view(-1)
+    return results
+
+def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1, bd=False):
+    func = BD_Dataset if bd else VideoDataset
+    dataset = func(opt, mode, print_info, specific=specific, target_ratio=target_ratio)
     if opt.get('splits_redefine_path', ''):
         dataset.set_splits_by_json_path(opt['splits_redefine_path']) 
     return DataLoader(
@@ -328,7 +358,8 @@ def analyze_length_novel_unique(gt_data, data, vocab, splits, n=1, calculate_nov
 
 def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False, teacher_model=None, length_crit=None, 
     no_score=False, save_videodatainfo=False,  saved_with_pickle=False, pickle_path=None, dict_mapping={}, analyze=False, collect_best_candidate_iterative_results=False, collect_path=None, 
-    write_time=False, save_embs=False, save_to_spice=False, calculate_novel=True, evaluate_iterative_results=False, update_gram4=False):
+    write_time=False, save_embs=False, save_to_spice=False, calculate_novel=True, evaluate_iterative_results=False, update_gram4=False, extra_opt={}):
+    opt.update(extra_opt)
     model.eval()
     if teacher_model is not None:
         teacher_model.eval()
@@ -696,13 +727,17 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader, vocab, device, json_p
 
     return None
         
-def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_crit=None, epoch=-1):
+def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_crit=None, epoch=-1, bd=False):
     model.train()
     crit.reset_loss_recorder()
 
     for data in tqdm(loader, ncols=150, leave=False):
         optimizer.zero_grad()
-        results = get_forword_results(opt, model, data, device=device, only_data=False, vocab=loader.dataset.get_vocab())
+        
+        func = get_forword_results_bd if bd else get_forword_results
+        vocab = None if bd else loader.dataset.get_vocab()
+
+        results = func(opt, model, data, device=device, only_data=False, vocab=vocab)
         
         loss = crit.get_loss(results,epoch=epoch)
         loss.backward()
@@ -713,7 +748,7 @@ def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_c
     name, loss_info = crit.get_loss_info()
     if logger is not None:
         logger.write_text('\t'.join(['%10s: %05.3f' % (item[0], item[1]) for item in zip(name, loss_info)]))
-    return loss_info[0]
+    return loss_info if bd else loss_info[0]
 
 def get_teacher_prob(epoch, ss_k = 100, linear = [200, 0.7], piecewise = [150, 0.95, 0.7], ss_type=1, max_epoch=500):
     if ss_type == 0:
@@ -838,7 +873,7 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     shutil.rmtree(folder_path)
 
 
-def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device):
+def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device, beam_alpha_set=[0, 0.5, 0.75, 1]):
     length = min([best_model.qsize(), opt['k_best_model']])
 
     teacher_model_path = ""
@@ -878,7 +913,7 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
         test_res_record, test_sum_record = [], []
         vali_res_record, vali_sum_record = [], []
         tqdm.write('-------------------- %d --------------------' % i)
-        for beam_alpha in [0, 0.5, 0.75, 1]:
+        for beam_alpha in beam_alpha_set:
             opt['beam_alpha'] = beam_alpha
             vali_result = run_eval(opt, model, crit, vali_loader, vocab, device)
             test_result = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path, json_name='%d_bs5_ba%d.json'%(best_res['epoch'], int(100 * opt['beam_alpha'])), analyze=True)
@@ -1017,3 +1052,216 @@ def test_vatex(best_model, results_path, opt, model, crit, vali_loader, test_loa
                 filename=results_model_name
             )
         os.remove(best_model_path)
+
+
+def prepare_training_data(opt, pickle_path, wtoi, path_to_save):
+    def sent2idx(sent, wtoi):
+        # <bos> is treated as <cls>
+        return [Constants.BOS] + [wtoi[word] for word in sent.split(' ')]
+
+    scorer = COCOScorer()
+    sent = pickle.load(open(pickle_path, 'rb'))
+    gts = pickle.load(open(opt['reference'], 'rb'))
+    topk, num_positive = int(opt['bd_parameters'][1]), int(opt['bd_parameters'][3])
+
+    keylist = sent.keys()
+    res = defaultdict(list)
+    for i in tqdm(range(topk)):
+        with suppress_stdout_stderr():
+            samples = {}
+            for key in keylist:
+                samples[key] = []
+                samples[key].append({'image_id': key, 'caption': sent[key][i]['caption']})
+            valid_score, detail_scores = scorer.score(gts, samples, samples.keys())
+            for k in keylist:
+                res[k].append(detail_scores[k]['CIDEr'] + detail_scores[k]['METEOR'])
+
+    data = {'caption': {}, 'label': {}}
+    for key in keylist:
+        index = np.argsort(res[key]).tolist()[::-1]
+        caps = []
+        labels = []
+        tmp = num_positive
+        for j, idx in enumerate(index):
+            print(key, j, sent[key][idx]['caption'])
+            caps.append(sent2idx(sent[key][idx]['caption'], wtoi))
+            labels.append(tmp if j < num_positive else (tmp-1))
+            tmp -= 1
+        data['caption'][key] = caps
+        data['label'][key] = labels
+
+    pickle.dump(data, open(path_to_save, 'wb'))
+    # with suppress_stdout_stderr():
+    #     samples = {}
+    #     for key in keylist:
+    #         samples[key] = []
+    #         index = np.array(res[key]).argmax()
+    #         samples[key].append({'image_id': key, 'caption': sent[key][index]['caption']})
+    #     valid_score, detail_scores = scorer.score(gts, samples, samples.keys())
+    # print(valid_score)
+
+
+
+def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
+    model.to(device)
+    optimizer = get_optimizer(opt, model)
+    crit = get_criterion(opt)
+
+    loader = get_loader(opt, 'trainval')
+    vocab = loader.dataset.get_vocab()
+    wtoi = {v: k for k, v in vocab.items()}
+
+    # prepare training data
+    extra_opt = {
+        'beam_size': int(opt['bd_parameters'][0]),
+        'topk': int(opt['bd_parameters'][1]),
+        'beam_alpha': opt['bd_parameters'][2],
+    }
+    name = '%d_%d_%03d' % (extra_opt['beam_size'], extra_opt['topk'], int(100*extra_opt['beam_alpha']))
+
+    pickle_path = os.path.join(opt['checkpoint_path'], 'pickle_file')
+    path_to_save = os.path.join(pickle_path, 'training_data_%s.pkl'%name)
+
+    opt['use_beam_decoder'] = False
+    if not os.path.exists(path_to_save):
+        if not os.path.exists(pickle_path): 
+            os.makedirs(pickle_path)
+        
+        pickle_path = os.path.join(pickle_path, '%s.pkl'%name)
+
+        if not os.path.exists(pickle_path):
+            run_eval(opt, model, None, loader, vocab, device,
+                    no_score=True, 
+                    save_videodatainfo=True,
+                    saved_with_pickle=True, 
+                    pickle_path=pickle_path,
+                    extra_opt=extra_opt
+                )
+        prepare_training_data(opt, pickle_path, wtoi, path_to_save)
+    opt['use_beam_decoder'] = True
+    opt['bd_training_data'] = path_to_save
+
+    # start training
+    train_loader_bd = get_loader(opt, 'train', bd=True)
+    vali_loader_bd = get_loader(opt, 'validate', bd=True)
+
+    vali_loader = get_loader(opt, 'validate')
+    test_loader = get_loader(opt, 'test')
+
+    folder_path = os.path.join(opt["checkpoint_path"], 'tmp_models')
+    best_model = k_PriorityQueue(
+        k_best_model = opt.get('k_best_model', 5), 
+        folder_path = folder_path
+        )
+
+    logger = CsvLogger(
+        filepath=opt["checkpoint_path"], 
+        filename='trainning_record.csv', 
+        fieldsnames=['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum']
+        )
+
+    opt['beam_size'] = 5
+    opt['beam_alpha'] = 1.0
+
+    if first_evaluate_whole_folder:
+        assert os.path.exists(folder_path)
+        best_model.load()
+    else:
+        start_epoch = 0
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        for epoch in tqdm(range(opt['epochs']), ncols=150, leave=False):
+            if epoch < start_epoch: 
+                continue 
+
+            # training BD
+            train_loss, train_acc = run_train(opt, model, crit, optimizer, train_loader_bd, device, epoch=epoch, bd=True)
+            # evaluate BD
+            vali_loss, vali_acc = run_eval_bd(opt, model, crit, vali_loader_bd, device)
+            logger.write_text("epoch %d (lr=%g)\t\tTrain (%.2f, %.2f)\t\tValid (%.2f, %.2f)" \
+                % (epoch, optimizer.get_lr(), train_loss, train_acc, vali_loss, vali_acc))
+
+            optimizer.epoch_update_learning_rate()
+            
+            # logging
+            if epoch < opt['start_eval_epoch'] - 1:
+                save_checkpoint(
+                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': {}}, 
+                        False, 
+                        filepath=opt["checkpoint_path"], 
+                        filename='checkpoint.pth.tar'
+                    )
+            elif (epoch+1) % opt["save_checkpoint_every"] == 0:
+                res = run_eval(opt, model, crit, vali_loader, vocab, device)
+                for k, v in zip(['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc'], 
+                                [epoch, train_loss, train_acc, vali_loss, vali_acc]):
+                    res[k] = v
+                res.pop('loss')
+                logger.write(res)
+
+                save_checkpoint(
+                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': res}, 
+                        False, 
+                        filepath=opt["checkpoint_path"], 
+                        filename='checkpoint.pth.tar'
+                    )
+                
+                model_name = 'model_%04d.pth.tar' % res['epoch']
+                model_path = os.path.join(folder_path, model_name)
+                not_break, info = best_model.check(res, model_path, model_name, opt)
+                if not not_break:
+                    # reach the tolerence
+                    break
+                logger.write_text(info)
+            
+    
+    
+    results_path = os.path.join(opt["checkpoint_path"], 'best')
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
+
+    if opt['dataset'].lower() == 'vatex':
+        func = test_vatex
+    else:
+        func = test_na if opt['na'] else test_ar
+    func(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device, beam_alpha_set=[1])
+    shutil.rmtree(folder_path)
+    
+
+def run_eval_bd(opt, model, crit, loader, device):
+    model.eval()
+    crit.reset_loss_recorder()
+    res = []
+    lab = []
+    for data in tqdm(loader, ncols=150, leave=False):
+        results = get_forword_results_bd(opt, model, data, device=device)
+        res.append(results['pred_beam'])
+        lab.append(results['beam'])
+
+        #loss = crit.get_loss(results)
+    #name, loss_info = crit.get_loss_info()
+
+    pred_choice = torch.cat(res, dim=0).cpu().max(dim=-1)[1]
+    target = torch.cat(lab, dim=0).cpu()
+    target = target.gt(0).long()
+    #print(pred_choice.shape, target.shape)
+    # TP    predict 和 label 同时为1
+    TP = ((pred_choice == 1) & (target == 1)).cpu().sum().float()
+    # TN    predict 和 label 同时为0
+    TN = ((pred_choice == 0) & (target == 0)).cpu().sum().float()
+    # FN    predict 0 label 1
+    FN = ((pred_choice == 0) & (target == 1)).cpu().sum().float()
+    # FP    predict 1 label 0
+    FP = ((pred_choice == 1) & (target == 0)).cpu().sum().float()
+
+    #print(TP, TN, FN, FP)
+    p = TP / (TP + FP)
+    r = TP / (TP + FN)
+    #print(p, r)
+    F1 = 2 * r * p / (r + p)
+    acc = (TP + TN) / (TP + TN + FP + FN)
+    tqdm.write('%d\t%d\t%d\t%d'%(TP, FP, TN, FN))
+    tqdm.write('P: %.2f\tR: %.2f\tF1: %.2f\tAcc: %.2f'%(100*p, 100*r, 100*F1, 100*acc))
+
+    return [0, F1]

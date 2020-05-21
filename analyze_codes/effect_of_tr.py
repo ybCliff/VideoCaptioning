@@ -14,7 +14,7 @@ for key in sent1.keys():
     wtr = score1[key][index::6]
     ntr = score2[key][index::6]
     tmp = sent1[key][index::6]
-    print('------------------ %s' % key)
+    
     s1 = []
     s2 = []
     for ss1, ss2, t in zip(wtr, ntr, tmp):
@@ -27,6 +27,10 @@ for key in sent1.keys():
     #print(s1.tolist(), s2.tolist(), s1.shape)
     if np.argmin(s1) == np.argmin(s2):
         continue
+
+    #if 'a car is driving a car' not in sent1[key][index::6]:
+    #    continue
+    print('------------------ %s' % key)
     t1 = np.argsort(s1, kind='stable')
     t2 = np.argsort(s2, kind='stable')
     for i, sent in enumerate(sent1[key][index::6]):

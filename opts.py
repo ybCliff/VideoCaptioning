@@ -276,6 +276,11 @@ def parse_opt():
     parser.add_argument('-ma', '--multitask_attribute', default=False, action='store_true')
     parser.add_argument('-ncpv', '--num_cap_per_vid', type=int, default=-1)
 
+    parser.add_argument('-ubd', '--use_beam_decoder', default=False, action='store_true')
+    parser.add_argument('--bd_parameters', nargs='+', type=float, default=[6, 6, 1.0, 3], \
+        help='[beam_size, topk, beam_alpha, num_positive], prepare data to train beam decoder')
+    
+
     args = parser.parse_args()
     args.all_caps_a_round = True
 
@@ -389,6 +394,7 @@ def parse_opt():
             else:
                 args.feats_m_name = ['kinetics_16_8.hdf5']
                 args.feats_i_name = ['resnet101_60.hdf5']
+                args.feats_a_name = ['msrvtt_vggish_60.hdf5', 'vtt_boaw256.hdf5', 'fvdb_260.hdf5']
 
         if args.use_tag:
             #args.feats_t_name = ['attribute_tag.hdf5']
@@ -419,6 +425,12 @@ def parse_opt():
         if args.num_cap_per_vid != -1:
             args.scope += 'numCap%d'%args.num_cap_per_vid
 
+        if args.use_beam_decoder:
+            args.crit = ['beam']
+            args.crit_name = ['Beam Loss']
+            args.crit_scale = [1]
+            args.scope += 'ubd'
+
         
         #pass
 
@@ -441,5 +453,8 @@ CUDA_VISIBLE_DEVICES=0 python train.py -ar -m mi -ss -wc
 非自回归训练：
 CUDA_VISIBLE_DEVICES=0 python train.py -na -m mi -wc -method nv
 
+AR - attribute generation 
 CUDA_VISIBLE_DEVICES=3 python train.py -ar -method ag -m mi -wc --scope ag
+
+python train.py -m mi -ar -wc -ubd --scope dummy -lpt "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed920_ag/best/0047_176815_182718_186701_186558_185283.pth.tar" --method ag
 '''

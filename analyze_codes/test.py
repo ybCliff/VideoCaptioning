@@ -165,6 +165,69 @@ plt.subplots_adjust(top=0.97, bottom=0.11, right=0.97, left=0.13, hspace=0, wspa
 #plt.show()
 
 
+data = pickle.load(open("/home/yangbang/VideoCaptioning/Youtube2Text/info_corpus_0.pkl", 'rb'))
+info = data['info']
+itow = info['itow']
+caption = data['captions']
+keylist = caption.keys()
+rec = []
+
+# for k in keylist:
+#     for caps in caption[k]:
+#         cap = [itow[item] for item in caps[1:-1]]
+#         res = nltk.pos_tag(cap)
+#         for w, t in res:
+#             if my_mapping[t] == 'NOUN':
+#                 rec.append(w)
+
+record = {}
+for k in tqdm(keylist):
+    for caps in caption[k]:
+        cap = [itow[item] for item in caps[1:-1]]
+        res = nltk.pos_tag(cap)
+        for w, t in res:
+            if my_mapping[t] not in record.keys():
+                record[my_mapping[t]] = []
+            if w in ['<unk>']:
+                continue
+            if my_mapping[t] == 'VERB' and w in ['is', 'are', 'was', 'were']:
+                continue
+            record[my_mapping[t]].append(w)
+
+r2 = {}
+c = 0
+for k, v in record.items():
+    r2[k] = len(list(set(v))) #set(v)
+    c += r2[k]
+
+for k, v in r2.items():
+    print(k, v/c)
+
+print('---------------')
+
+r2 = {}
+c = 0
+for k, v in record.items():
+    r2[k] = len(list(v)) #set(v)
+    c += r2[k]
+
+for k, v in r2.items():
+    print(k, v/c)
+
+
+
+
+# for k, v in itow.items():
+#     res = nltk.pos_tag([v])
+#     for w, t in res:
+#         if my_mapping[t] == 'NOUN':
+#             rec.append(w)
+# rec = list(set(rec))
+# print(len(rec))
+
+# with open('msvd_noun.txt', 'w') as f:
+#     f.write('\n'.join(rec))
+
 
 data = pickle.load(open("/home/yangbang/VideoCaptioning/MSRVTT/msrvtt_refs.pkl", 'rb'))
 record = {}
@@ -178,12 +241,16 @@ for i in tqdm(range(10000)):
         for w, t in res:
             if my_mapping[t] not in record.keys():
                 record[my_mapping[t]] = []
+            if my_mapping[t] == 'VERB' and w in ['is', 'are', 'was', 'were']:
+                continue
             record[my_mapping[t]].append(w)
+
+
 
 r2 = {}
 c = 0
 for k, v in record.items():
-    r2[k] = len(list(set(v)))
+    r2[k] = len(list(set(v))) #set(v)
     c += r2[k]
 
 for k, v in r2.items():

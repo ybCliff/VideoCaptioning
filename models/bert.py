@@ -1972,3 +1972,74 @@ class Attribute_Predictor_Embeddings(nn.Module):
     def linear(self, x):
         return self.tgt_word_prj(x)
 '''
+
+
+
+class BeamDecoder(nn.Module):
+    def __init__(self, config, embedding):
+        super(BeamDecoder, self).__init__()
+        if isinstance(config, dict):
+            config = dict2obj(config)
+
+        self.output_attentions = config.output_attentions
+        #self.embedding = BertEmbeddings(config, return_pos=True if config.pos_attention else False)
+        #self._init_embedding(embedding.word_embeddings.weight)
+
+        self.embedding = embedding
+        self.bd_load_feats = getattr(config, "bd_load_feats", False)
+        self.layer = nn.ModuleList([BertLayer(config, decoder_layer=True if self.bd_load_feats else False) for _ in range(config.num_hidden_layers_decoder)])
+
+        self.prj = nn.Sequential(
+                nn.Linear(config.dim_hidden, config.dim_hidden),
+                nn.ReLU(),
+                nn.Dropout(config.hidden_dropout_prob),
+                nn.Linear(config.dim_hidden, 2, bias=False),
+            )
+
+
+    def _init_embedding(self, weight, option={}):
+        self.embedding.word_embeddings.weight.data.copy_(weight.data)
+        if not option.get('train_emb', True):
+            for p in self.embedding.word_embeddings.parameters():
+                p.requires_grad = False
+
+    def forward(self, enc_output, tgt_seq, category):
+        if self.bd_load_feats:
+            if isinstance(enc_output, list):
+                enc_output = enc_output[0]
+            src_seq = torch.ones(enc_output.size(0), enc_output.size(1)).to(enc_output.device)
+            attend_to_enc_output_mask = get_attn_key_pad_mask(seq_k=src_seq, seq_q=tgt_seq)
+        else:
+            enc_output = attend_to_enc_output_mask = None
+        all_attentions = ()
+
+        # each token can attend to the whole sequence
+        slf_attn_mask = get_attn_key_pad_mask(seq_k=tgt_seq, seq_q=tgt_seq)
+        slf_attn_mask[:, :, 0] = 1
+
+        non_pad_mask = get_non_pad_mask(tgt_seq)
+        hidden_states = self.embedding(tgt_seq, category=category)
+
+        for i, layer_module in enumerate(self.layer):
+            if not i:
+                input_ = hidden_states
+            else:
+                input_ = layer_outputs[0]# + hidden_states
+            layer_outputs = layer_module(
+                    hidden_states=input_, 
+                    enc_output=enc_output,
+                    attention_mask=slf_attn_mask, 
+                    non_pad_mask=non_pad_mask,
+                    attend_to_enc_output_mask=attend_to_enc_output_mask
+                )
+
+            if self.output_attentions:
+                all_attentions = all_attentions + (layer_outputs[2],)
+
+        logit = self.prj(layer_outputs[0][:, 0]) # only feed the [cls] token into the classifier
+        logit = F.log_softmax(logit, dim=-1)
+
+        outputs = (logit,)
+        if self.output_attentions:
+            outputs = outputs + (all_attentions,)
+        return outputs  # last-layer hidden state, (all hidden states), (all attentions)
