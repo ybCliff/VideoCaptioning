@@ -1,5 +1,6 @@
 import argparse
 import models.Constants as Constants
+import os
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -276,9 +277,18 @@ def parse_opt():
     parser.add_argument('-ma', '--multitask_attribute', default=False, action='store_true')
     parser.add_argument('-ncpv', '--num_cap_per_vid', type=int, default=-1)
 
+    # testing beam candidate selection
+
     parser.add_argument('-ubd', '--use_beam_decoder', default=False, action='store_true')
     parser.add_argument('--bd_parameters', nargs='+', type=float, default=[6, 6, 1.0, 3], \
         help='[beam_size, topk, beam_alpha, num_positive], prepare data to train beam decoder')
+
+    # for zhangcan
+    parser.add_argument('-upl', '--use_pan_lite', default=False, action='store_true')
+
+    # reinforement learning
+    parser.add_argument('-use_rl', '--use_rl', default=False, action='store_true')    
+    parser.add_argument('--rl_cached_file', type=str, default='rl_cached')    
     
 
     args = parser.parse_args()
@@ -433,15 +443,29 @@ def parse_opt():
 
         
         #pass
+    # for zhangcan
+    if args.use_pan_lite:
+        assert args.dataset == 'Youtube2Text'
+        args.modality = 'i'
+        args.dim_i = 2048
+        args.feats_i_name = ['pan_lite.hdf5']
+        args.feats_m_name = args.feats_a_name = []
+        args.dim_m = args.dim_a = 1
+        args.load_feats_type = 0
+        args.scope += 'pan_lite'
 
-    '''
-    mapping = {
-        'lang': ('seq_probs', 'gold'),
-        'obj': ('pred_obj', 'obj'),
-        'tag': ('pred_tags', 'taggings'),
-        'length': ('pred_length', 'length_target'),
-    }
-    '''
+    # reinforcement learning
+    args.rl_cached_file = os.path.join(args.base_dir, args.dataset, args.rl_cached_file + '_%d'%args.word_count_threshold)
+    if args.use_rl:
+        args.crit = ['self_crit']
+        args.crit_name = ['Reward']
+        args.crit_scale = [1.0]
+        args.scope = args.scope + '_rl'
+        args.all_caps_a_round = False
+        args.tolerence = 10
+        args.k_best_model = 1
+        args.standard = ['CIDEr']
+
     args.crit_key = [Constants.mapping[item.lower()] for item in args.crit]
     return args
 
@@ -456,5 +480,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py -na -m mi -wc -method nv
 AR - attribute generation 
 CUDA_VISIBLE_DEVICES=3 python train.py -ar -method ag -m mi -wc --scope ag
 
-python train.py -m mi -ar -wc -ubd --scope dummy -lpt "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed920_ag/best/0047_176815_182718_186701_186558_185283.pth.tar" --method ag
+python train.py -m mi -ar -wc -ubd -lpt "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed920_ag/best/0047_176815_182718_186701_186558_185283.pth.tar" --method ag
+
+python train.py -m mi -ar -wc -use_rl -lpt "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed920_ag/best/0047_176815_182718_186701_186558_185283.pth.tar" --method ag
 '''

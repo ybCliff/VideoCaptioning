@@ -24,7 +24,10 @@ class Seq2Seq(nn.Module):
         self.auxiliary_task_predictor = auxiliary_task_predictor
         self.decoder = decoder
         #if opt.get('others', False):
-        self.tgt_word_prj = self.decoder.embedding.linear
+        self.tgt_word_prj = getattr(self.decoder.embedding, 'linear', None)
+        if self.tgt_word_prj is None:
+            self.tgt_word_prj = nn.Linear(opt['dim_word'], opt['vocab_size'], bias=False)
+            nn.init.xavier_normal_(self.tgt_word_prj.weight)
         #else:
         #    self.tgt_word_prj = tgt_word_prj
         #    nn.init.xavier_normal_(self.tgt_word_prj.weight)
@@ -93,15 +96,22 @@ class Seq2Seq(nn.Module):
         return results
 
     def forward(self, **kwargs):
+        if self.opt.get('use_rl', False):
+            func_mapping = {
+                'ARFormer': self.forward_ARFormer_rl,
+                'LSTM': self.forward_LSTM_rl,
+            }
+        else:
+            func_mapping = {
+                'LSTM': self.forward_LSTM,
+                'ARFormer': self.forward_ARFormer,
+                'NARFormer': self.forward_NARFormer,
+                'ENSEMBLE': self.forward_ENSEMBLE
+            }
+
         if self.opt.get('use_beam_decoder', False):
             return self.forward_beam_decoder(kwargs)
-
-        func_mapping = {
-            'LSTM': self.forward_LSTM,
-            'ARFormer': self.forward_ARFormer,
-            'NARFormer': self.forward_NARFormer,
-            'ENSEMBLE': self.forward_ENSEMBLE
-        }
+        
         return func_mapping[kwargs['opt']['decoder_type']](kwargs)
 
     
@@ -159,28 +169,22 @@ class Seq2Seq(nn.Module):
         )
 
         encoder_outputs = self.encode(feats)
-        if self.opt['method'] == 'ag':
-            tgt_tokens = [item[:, :-1] for item in tgt_tokens]
-            seq_probs, pred_embs, *_ = self.decoder(
-                tgt_seq=tgt_tokens, 
-                enc_output=encoder_outputs['enc_output'], 
-                category=category,
-                tags=encoder_outputs.get(Constants.mapping['attr'][0], None)
-                )
+
+        if isinstance(tgt_tokens, list):
+            tgt_seq = [item[:, :-1] for item in tgt_tokens]
         else:
-            seq_probs, pred_embs, *_ = self.decoder(
-                tgt_seq=tgt_tokens[:, :-1], 
-                enc_output=encoder_outputs['enc_output'], 
-                category=category,
-                tags=encoder_outputs.get(Constants.mapping['attr'][0], None)
-                )
+            tgt_seq = tgt_tokens[:, :-1]
+
+        seq_probs, pred_embs, *_ = self.decoder(
+            tgt_seq=tgt_seq, 
+            enc_output=encoder_outputs['enc_output'], 
+            category=category,
+            tags=encoder_outputs.get(Constants.mapping['attr'][0], None)
+            )
         #pred_embs = seq_probs[-1] if isinstance(seq_probs, list) else seq_probs
 
         if isinstance(seq_probs, list):
-            res = []
-            for i in range(len(seq_probs)):
-                res.append(F.log_softmax(self.tgt_word_prj(seq_probs[i]), dim=-1))
-            seq_probs = res
+            seq_probs = [F.log_softmax(self.tgt_word_prj(item), dim=-1) for item in seq_probs]
         else:
             seq_probs = F.log_softmax(self.tgt_word_prj(seq_probs), dim=-1)
 
@@ -198,6 +202,151 @@ class Seq2Seq(nn.Module):
                 Constants.mapping['dist'][0]: pred_embs, Constants.mapping['dist'][1]: bert_embs,
                 Constants.mapping['attr2'][0]: pred_attr
         }
+
+
+    def forward_ARFormer_rl(self, kwargs):
+        feats, category, sample_max, sample_rl = map(
+            lambda x: kwargs[x], 
+            ["feats", "category", "sample_max", "sample_rl"]
+        )
+        temperature = kwargs.get('temperature', 1)
+        mixer_from = 0
+        # either sample_max or sample_rl is true
+        assert sample_max ^ sample_rl
+        
+        # get the encoded video representations
+        encoder_outputs = self.encode(feats)
+        enc_output = encoder_outputs['enc_output']
+
+        max_len = 16 #self.opt['max_len']
+        batch_size, device = enc_output.size(0), enc_output.device
+
+        # use to record the sampled results
+        seq = []
+        seqLogprobs = []
+
+        # initialize the sequence as the begin-of-sentence token
+        tgt_seq = [enc_output.new(batch_size, 1).fill_(Constants.BOS).long()]
+
+        for timestep in range(max_len - 1):
+            dec_output, *_ = self.decoder(
+                tgt_seq=torch.cat(tgt_seq, dim=1), # [batch_size, timestep+1]
+                enc_output=enc_output, 
+                category=category,
+            )
+            # pick the last step
+            dec_output = dec_output[-1][:, -1, :] if isinstance(dec_output, list) else dec_output[:, -1, :]
+            logprobs = F.log_softmax(self.tgt_word_prj(dec_output), dim=1)
+
+            if sample_max: # Greedy decoding
+                sampleLogprobs, it = torch.max(logprobs, 1)
+                it = it.view(-1).long()
+
+            if sample_rl:# Sampling from multinomial for self-critical
+                if timestep >= mixer_from:
+                    prob_prev = torch.exp(torch.div(logprobs, temperature))     # fetch prev distribution (softmax)
+
+                    it = torch.multinomial(prob_prev, 1)
+                    sampleLogprobs = logprobs.gather(1, it) # gather the logprobs at sampled positions
+                    #print(prob_prev.gather(1, it)[:5], prob_prev.max(1)[0][:5])
+                    it = it.view(-1).long() # flatten indices for saving in tensor
+                else:
+                    sampleLogprobs, it = torch.max(logprobs, 1)
+                    it = it.view(-1).long()
+                
+                
+            # Replace <end> token (if there is) with 0, i.e., Constants.PAD
+            it = it.clone()
+            #it[it == Constants.EOS] = 0
+
+            # If all batches predict the <end> token, then stop looping
+            unfinished = it.ne(Constants.EOS) if not timestep else (unfinished & it.ne(Constants.EOS)) #it > 0 if not timestep else unfinished * (it > 0)
+            #print(unfinished)
+            # record
+            it = it * unfinished.type_as(it)
+            seq.append(it)
+            seqLogprobs.append(sampleLogprobs.view(-1))
+            
+            # update the input of the next step
+            tgt_seq.append(it.unsqueeze(1))
+            
+            # quit loop if all sequences have finished
+            if unfinished.sum() == 0:
+                break
+
+        return torch.stack(seq, 1), torch.stack(seqLogprobs, 1)
+
+
+    def forward_LSTM_rl(self, kwargs):
+        feats, category, sample_max, sample_rl = map(
+            lambda x: kwargs[x], 
+            ["feats", "category", "sample_max", "sample_rl"]
+        )
+        temperature = kwargs.get('temperature', 1)
+        mixer_from = 0
+        # either sample_max or sample_rl is true
+        assert sample_max ^ sample_rl
+        
+        # get the encoded video representations
+        encoder_outputs = self.encode(feats)
+        enc_output, enc_hidden = encoder_outputs['enc_output'], encoder_outputs['enc_hidden']
+
+        max_len = 16 #self.opt['max_len']
+        batch_size, device = enc_output.size(0), enc_output.device
+
+        # use to record the sampled results
+        seq = []
+        seqLogprobs = []
+
+        it = enc_output.new(batch_size, 1).fill_(Constants.BOS).long()
+        state = self.decoder.init_hidden(enc_hidden)
+
+        for timestep in range(max_len - 1):
+            results = self.decoder(
+                        it=it, 
+                        encoder_outputs=enc_output, 
+                        category=category, 
+                        decoder_hidden=state, 
+                        )
+            
+            dec_output = results['dec_outputs']
+            state = results['dec_hidden']
+
+            logprobs = F.log_softmax(self.tgt_word_prj(dec_output), dim=1)
+
+            if sample_max: # Greedy decoding
+                sampleLogprobs, it = torch.max(logprobs, 1)
+                it = it.view(-1).long()
+
+            if sample_rl:# Sampling from multinomial for self-critical
+                if timestep >= mixer_from:
+                    prob_prev = torch.exp(torch.div(logprobs, temperature))     # fetch prev distribution (softmax)
+
+                    it = torch.multinomial(prob_prev, 1)
+                    sampleLogprobs = logprobs.gather(1, it) # gather the logprobs at sampled positions
+                    #print(prob_prev.gather(1, it)[:5], prob_prev.max(1)[0][:5])
+                    it = it.view(-1).long() # flatten indices for saving in tensor
+                else:
+                    sampleLogprobs, it = torch.max(logprobs, 1)
+                    it = it.view(-1).long()
+
+            # Replace <end> token (if there is) with 0, i.e., Constants.PAD
+            it = it.clone()
+            #it[it == Constants.EOS] = 0
+
+            # If all batches predict the <end> token, then stop looping
+            unfinished = it.ne(Constants.EOS) if not timestep else (unfinished & it.ne(Constants.EOS)) #it > 0 if not timestep else unfinished * (it > 0)
+            #print(unfinished)
+            # record
+            it = it * unfinished.type_as(it)
+            seq.append(it)
+            seqLogprobs.append(sampleLogprobs.view(-1))
+            
+            # quit loop if all sequences have finished
+            if unfinished.sum() == 0:
+                break
+
+        return torch.stack(seq, 1), torch.stack(seqLogprobs, 1)
 
 
     def forward_LSTM(self, kwargs):

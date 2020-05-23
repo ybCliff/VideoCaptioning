@@ -149,7 +149,7 @@ class ModelNode(object):
         return self.res[self.key] < other.res[self.key]   
 
 class k_PriorityQueue(object):
-    def __init__(self, k_best_model, folder_path):
+    def __init__(self, k_best_model, folder_path, standard=['METEOR', 'CIDEr']):
         self.k_best_model = k_best_model
         self.queue = PriorityQueue()
         self.folder_path = folder_path
@@ -157,7 +157,7 @@ class k_PriorityQueue(object):
         self.continuous_failed_count = 0
         self.key = 'Sum'
         self.best_res = {self.key: 0, 'Bleu_4':0, 'METEOR':0, 'ROUGE_L':0, 'CIDEr':0} # rethe best overall score
-        self.best_ = {'METEOR':0, 'CIDEr':0}#{'Bleu_4':0, 'METEOR':0, 'ROUGE_L':0, 'CIDEr':0}
+        self.best_ = {k: 0 for k in standard}
 
 
     def score(self, res):
@@ -205,7 +205,7 @@ class k_PriorityQueue(object):
                 self.queue.put(node)
                 self.continuous_failed_count += 1
                 if self.continuous_failed_count >= opt['tolerence']:
-                    logger.write_text("Have reached maximun tolerence {}!".format(opt['tolerence']))
+                    #logger.write_text("Have reached maximun tolerence {}!".format(opt['tolerence']))
                     return False, self.continuous_failed_count
         else:
             self.queue.put(ModelNode(res, model_path))

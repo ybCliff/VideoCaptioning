@@ -195,7 +195,7 @@ def get_model(opt):
 
     if len(opt['crit']) == 1:
         # only the main task: language generation
-        if not opt.get('use_beam_decoder', False):
+        if not opt.get('use_beam_decoder', False) and not opt.get('use_rl', False):
             assert opt['crit'][0] == 'lang'
 
 

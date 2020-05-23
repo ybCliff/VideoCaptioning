@@ -148,7 +148,7 @@ def main(opt):
     print('SEEEEEEEEEEED: %d'%opt['seed'])
 
     model_name = opt['encoder_type'] + '_' + opt['decoder_type']
-    modality = (opt['modality'].upper() + 's') if 'c3d' in opt['feats_m_name'][0] else opt['modality'].upper()
+    modality = opt['modality'].upper()#(opt['modality'].upper() + 's') if 'c3d' in opt['feats_m_name'][0] else opt['modality'].upper()
     
     if opt['na'] or opt['ar']:
         scope = get_scope2(opt)
@@ -216,6 +216,9 @@ def main(opt):
         print_information(opt, model, model_name)
         train_beam_decoder(opt, model, device, first_evaluate_whole_folder=opt['first_evaluate_whole_folder'])
     else:
+        if opt['load_pretrained']:
+            model.load_state_dict(torch.load(opt['load_pretrained'])['state_dict'])
+            
         print_information(opt, model, model_name)
         train_network_all(opt, model, device, first_evaluate_whole_folder=opt['first_evaluate_whole_folder'])
 

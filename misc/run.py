@@ -15,7 +15,7 @@ import pandas as pd
 from misc.cocoeval import suppress_stdout_stderr, COCOScorer, COCOBLEUScorer
 import misc.utils as utils
 from dataloader import VideoDataset, BD_Dataset
-
+from collections import OrderedDict
 
 import math, random
 
@@ -71,7 +71,6 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
             [data['feats_i'], data['feats_m'], data['feats_a'], data['feats_s'], data['feats_t'],
             data['category'], data['labels'], data['length_target'], data['attribute']]
         )
-
     feats_t = feats_t.mean(1)
 
     if opt['decoder_type'] in ['ARFormer', 'NARFormer']:
@@ -184,19 +183,91 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
     results[Constants.mapping['attr'][1]] = attribute
 
     results['pure_target'] = data['pure_target'].to(device)
-
-    
-
-    #results['gold'] = data['pure_target'][:, 1:].to(device)
-    '''
-    tqdm.write('MASK Source: ' + to_sentence(tokens[0].tolist()[1:], vocab, break_words=[], skip_words=[Constants.PAD]))
-    tqdm.write('MASK Target: ' + to_sentence(labels[0].tolist()[1:], vocab, break_words=[], skip_words=[Constants.PAD]))
-
-    ind = labels[0, 1:].ne(Constants.PAD)
-    pred = results['seq_probs'][0].max(-1)[1][0][ind]
-    tqdm.write('MASK Predic: ' + to_sentence(pred.tolist(), vocab, break_words=[]))
-    '''
     return results
+
+
+def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weight = 1):
+    from cider.pyciderevalcap.ciderD.ciderD import CiderD
+    scorer = CiderD(df=opt['rl_cached_file'])
+    # ground_truth is the 5 ground truth captions for a mini-batch, which can be aquired from the preprocess_gd function
+    #[[c1, c2, c3, c4, c5], [c1, c2, c3, c4, c5],........]. Note that c is a caption placed in a list
+    # len(ground_truth) = batch_size. Already duplicated the ground truth captions in dataloader
+    
+    batch_size = gen_result.size(0)  
+    assert len(gts.keys()) == batch_size
+
+    res = OrderedDict()
+    gen_result = gen_result.data.cpu().numpy()   # (batch_size, max_len)
+    greedy_res = greedy_res.data.cpu().numpy()   # (batch_size, max_len)
+    
+    pt = []
+    for i in range(batch_size):
+        # change to string for evaluation purpose 
+        res[i] = [to_sentence(gen_result[i], vocab)]
+        pt.append(to_sentence(gen_result[i], vocab))
+        
+    for i in range(batch_size):
+        # change to string for evaluation purpose
+        res[batch_size + i] = [to_sentence(greedy_res[i], vocab)]
+        #tqdm.write(to_sentence(greedy_res[i], vocab) + '\t' + pt[i])
+
+    # 2 is because one is for the sampling and one for greedy decoding
+    res_ = [{'image_id':i, 'caption': res[i]} for i in range(2 * batch_size)] 
+    # the number of ground-truth captions for each image stay the same as above. Duplicate for the sampling and greedy
+    gts = {i: gts[i % batch_size] for i in range(2 * batch_size)}
+    _, cider_scores = scorer.compute_score(gts, res_)
+
+    scores = cider_weight * cider_scores
+    scores = scores[:batch_size] - scores[batch_size:]
+    rewards = np.repeat(scores[:, np.newaxis], gen_result.shape[1], 1)    # gen_result.shape[1] = max_len
+    rewards = torch.from_numpy(rewards).float()
+
+    return rewards
+
+def get_forward_results_rl(opt, model, data, device, vocab, references):
+    """
+        This function is for reinforcement learning.
+        The collected results will be returned to the criterion.
+    """
+    # (1) prepare features
+    feats_i, feats_m, feats_a, category = map(
+            lambda x: x.to(device), 
+            [data['feats_i'], data['feats_m'], data['feats_a'], data['category']]
+        )
+    mapping = {
+        'i': feats_i,
+        'm': feats_m,
+        'a': feats_a
+    }
+    modality = opt['modality'].lower()
+    feats = []
+    for char in modality:
+        assert char in ['i', 'm', 'a']
+        feats.append(mapping[char])
+
+    # (1) prepare ground-truth sentences
+    vids = data['video_ids']
+    gts = OrderedDict()
+    for i, vid in enumerate(vids):
+        gts[i] = [item['caption'] for item in references[vid]]
+        #gts[i] = [to_sentence(item[1:], vocab) for item in references[vid]]
+
+    # (2) Get greedy sequences, sampled sequences & logprobs
+    model.eval()
+    with torch.no_grad():
+        greedy_res, _ = model(feats=feats, category=category, sample_max=True, sample_rl=False, opt=opt)
+        # tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
+    model.train()
+    seq_gen, seqLogprobs = model(feats=feats, category=category, sample_max=False, sample_rl=True, opt=opt)
+
+    #print(gts[0])
+    #tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
+    tqdm.write(to_sentence(seq_gen[0].cpu().numpy(), vocab))
+
+    # (3) Calculate the rewards
+    rewards = get_self_critical_reward(opt, seq_gen, greedy_res, gts, vocab, cider_weight = 1)
+
+    return {k: v for k, v in zip(Constants.mapping['self_crit'], [seq_gen, seqLogprobs, rewards.to(device)])}
 
 
 def get_forword_results_bd(opt, model, data, device, only_data=False, vocab=None):
@@ -286,15 +357,6 @@ def duplicate(sent):
         res_str.append('%d-gram: %d' % (i, res.get(i, 0)))
     return ' '.join(sent), '\t'.join(res_str)
 
-def cal_score(opt, samples={'video9992': [{'image_id': 'video9992', 'caption': 'a man is riding a surfboard on a surfboard on the ocean'}],
-    'video9997': [{'image_id': 'video9997', 'caption': 'a woman is applying her face'}]
-
-    }, scorer=COCOScorer()):
-    gt_dataframe = json_normalize(json.load(open(opt["input_json"]))['sentences'])
-    gts = convert_data_to_coco_scorer_format(gt_dataframe)
-    with suppress_stdout_stderr():
-        valid_score = scorer.score(gts, samples, samples.keys())
-    print(valid_score)
 
 def cal_gt_n_gram(data, vocab, splits, n=1):
     gram_count = {}
@@ -734,10 +796,12 @@ def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_c
     for data in tqdm(loader, ncols=150, leave=False):
         optimizer.zero_grad()
         
-        func = get_forword_results_bd if bd else get_forword_results
-        vocab = None if bd else loader.dataset.get_vocab()
-
-        results = func(opt, model, data, device=device, only_data=False, vocab=vocab)
+        if opt.get('use_rl', False):
+            results = get_forward_results_rl(opt, model, data, device, loader.dataset.get_vocab(), loader.dataset.get_references())
+        else:
+            func = get_forword_results_bd if bd else get_forword_results
+            vocab = None if bd else loader.dataset.get_vocab()
+            results = func(opt, model, data, device=device, only_data=False, vocab=vocab)
         
         loss = crit.get_loss(results,epoch=epoch)
         loss.backward()
@@ -778,7 +842,8 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     folder_path = os.path.join(opt["checkpoint_path"], 'tmp_models')
     best_model = k_PriorityQueue(
         k_best_model = opt.get('k_best_model', 5), 
-        folder_path = folder_path
+        folder_path = folder_path,
+        standard = opt.get('standard', ['METEOR', 'CIDEr'])
         )
 
     #train_loader = get_loader(opt, 'train', print_info=False)
@@ -829,7 +894,12 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
 
             train_loss = run_train(opt, model, crit, optimizer, train_loader, device, logger=logger, epoch=epoch)
 
-            optimizer.epoch_update_learning_rate()
+            if opt.get('use_rl', False):
+                if best_model.continuous_failed_count > 0:
+                    optimizer.epoch_update_learning_rate()
+            else:
+                optimizer.epoch_update_learning_rate()
+
             # logging
             if epoch < opt['start_eval_epoch'] - 1:
                 save_checkpoint(
@@ -839,7 +909,12 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
                         filename='checkpoint.pth.tar'
                     )
             elif (epoch+1) % opt["save_checkpoint_every"] == 0:
-                res = run_eval(opt, model, crit, vali_loader, vocab, device)
+                if opt.get('use_rl', False):
+                    new_opt = opt.copy()
+                    new_opt.update({'beam_size': 5, 'beam_alpha': 1.0})
+                else:
+                    new_opt = opt
+                res = run_eval(new_opt, model, crit, vali_loader, vocab, device)
                 res['train_loss'] = train_loss
                 res['epoch'] = epoch
                 res['val_loss'] = res['loss']
@@ -1151,7 +1226,8 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
     folder_path = os.path.join(opt["checkpoint_path"], 'tmp_models')
     best_model = k_PriorityQueue(
         k_best_model = opt.get('k_best_model', 5), 
-        folder_path = folder_path
+        folder_path = folder_path,
+        standard = opt.get('standard', ['METEOR', 'CIDEr'])
         )
 
     logger = CsvLogger(

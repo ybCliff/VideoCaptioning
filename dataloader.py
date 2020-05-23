@@ -144,6 +144,9 @@ class VideoDataset(Dataset):
     def get_references(self):
         return self.references
 
+    def get_preprocessed_references(self):
+        return self.captions
+
     def make_infoset(self):
         infoset = []
 

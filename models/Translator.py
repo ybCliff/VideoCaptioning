@@ -242,7 +242,7 @@ class Translator(object):
                             decoder_hidden=enc_hidden, 
                             tag=tag
                         )
-                dec_output, enc_hidden, tag = res['dec_outputs'], res['dec_hidden'], res['pred_tag']
+                dec_output, enc_hidden, tag = res['dec_outputs'], res['dec_hidden'], res.get('pred_tag', None)
                 word_prob = F.log_softmax(self.model.tgt_word_prj(dec_output), dim=1)
                 word_prob = word_prob.view(n_active_inst, n_bm, -1)
                 return word_prob, enc_hidden, tag.argmax(1) if tag is not None else None

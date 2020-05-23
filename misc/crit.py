@@ -158,6 +158,30 @@ class AttributeLoss(nn.Module):
         #print(loss.shape)
         return loss.sum() / target.size(0)
 
+class SelfCritCriterion(nn.Module):
+    def __init__(self, keys):
+        super(SelfCritCriterion, self).__init__()
+        self.keys = keys
+
+    def forward(self, kwargs):
+        seq, sample_logprobs, reward = [kwargs[key] for key in self.keys]
+
+        sample_logprobs = sample_logprobs.view(-1)   # (batch_size * max_len)
+        reward = reward.view(-1)
+        # set mask elements for all <end> tokens to 0 
+        mask = (seq>0).float()                        # (batch_size, max_len)
+        
+        # account for the <end> token in the mask. We do this by shifting the mask one timestep ahead
+        mask = torch.cat([mask.new(mask.size(0), 1).fill_(1), mask[:, :-1]], 1).float()
+        
+        if not mask.is_contiguous():
+            mask = mask.contiguous()
+        
+        mask = mask.view(-1)
+        output = - sample_logprobs * reward * mask
+        output = torch.sum(output) / torch.sum(mask)
+        return output
+
 class Criterion(object):
     def __init__(self, 
         crit=[CrossEntropyLoss(ignore_index=Constants.PAD)], 
@@ -293,6 +317,9 @@ class Criterion(object):
                     i_loss = self.crit[i](pred, gt, results['pure_target'])
                 else:
                     i_loss = self.crit[i](pred, gt, results[Constants.mapping['lang'][1]])
+            elif isinstance(self.crit[i], SelfCritCriterion):
+                num_sample = pred.size(0)
+                i_loss = self.crit[i](results)
             else:
                 num_sample, i_loss = self.check_and_cal(pred, gt, self.crit[i])
 
@@ -343,6 +370,7 @@ def get_criterion(opt):
         'attr2': AttributeLoss(),
         'dist': DistillationLoss(ignore_index=Constants.PAD), # bert distillation
         'beam': BDLoss(), #nn.NLLLoss(),  # beam candidate classification
+        'self_crit': SelfCritCriterion(Constants.mapping['self_crit']),   # self-crit reinforcement learning
     }
     if opt.get('bow_loss', False):
         opt['crit'].append('bow')
@@ -375,7 +403,7 @@ def get_criterion(opt):
             calculate_word_acc = 2
     else:
         if opt['method'] == 'ag':
-            calculate_word_acc = 2 if not opt.get('use_beam_decoder', False) else 0
+            calculate_word_acc = 2 if (not opt.get('use_beam_decoder', False) and not opt.get('use_rl', False)) else 0
         else:
             calculate_word_acc = 0
 

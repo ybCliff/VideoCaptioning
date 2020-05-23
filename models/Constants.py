@@ -32,7 +32,10 @@ mapping = {
     'attr2': ('pred_attr2', 'attribute'),
 
     'beam': ('pred_beam', 'beam'),  #用于beam candidate selection
+    'self_crit': ('gen_seq', 'gen_logprobs', 'rewards'), # reinforcement learning
 }
+
+
 '''
 EOS = 0
 BOS = 1
