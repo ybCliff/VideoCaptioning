@@ -19,11 +19,9 @@ def main(opt):
     device = torch.device('cuda' if not opt.no_cuda else 'cpu')
     opt = vars(opt)
     checklist = [
-            'info_json', 'caption_json', 'next_info_json', 'all_caption_json', 'input_json',
-            'feats_a', 'feats_m', 'feats_i',
-            'dim_a', 'dim_m', 'dim_i',
+            'info_corpus', 'vocab_size',
             'with_category', 'num_category', 
-            'decoder_type', 'dataset', 'n_frames', 'max_len'
+            'decoder_type', 'dataset', 'n_frames', 'max_len', 'top_down'
             ]
 
     def check(d, other_d, key):
@@ -59,10 +57,14 @@ def main(opt):
     with open(os.path.join(pth, 'ensemble_opt.json'), 'w') as f:
         json.dump(opt, f)
 
-    loader = get_loader(opt, mode=opt['em'], print_info=False, specific=opt['specific'])
-    vocab = loader.dataset.get_vocab()
+    loader_list = []
+    for item in opt_list:
+        loader = get_loader(item, mode=opt['em'], print_info=False, specific=opt['specific'])
+        loader_list.append(loader)
 
-    metric = run_eval_ensemble(opt, opt_list, model_list, None, loader, vocab, device, 
+    vocab = loader_list[0].dataset.get_vocab()
+
+    metric = run_eval_ensemble(opt, opt_list, model_list, None, loader_list, vocab, device, 
         json_path=opt['json_path'], json_name=opt['json_name'], 
         print_sent=opt['print_sent'], no_score=opt['ns'], analyze=True)
     print(metric)
@@ -92,21 +94,14 @@ if __name__ == "__main__":
 
     parser.add_argument('--results_path', type=str, default='./ensemble_results')
     parser.add_argument('--ensemble_checkpoint_paths', nargs='+', type=str, default=[
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/AMI_Seed0_EBN_WC20_SS1_0_75_base_Ami/best/0046_179013_186663_189567_189993_189990.pth.tar",
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/AMI_Seed0_EBN_WC20_SS1_0_75_base_Mai/best/0044_179479_184734_188399_188466_187095.pth.tar",
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/AMI_Seed0_EBN_WC20_SS1_0_75_base_Iam/best/0042_177702_184338_187698_189578_189191.pth.tar",
-
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/A_Seed0_EBN_WC20_SS1_0_75_base/best/0034_138964_144352_145003_144404_143001.pth.tar",
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/I_Seed0_EBN_WC20_SS1_0_75_base/best/0030_171526_173378_175799_176511_176010.pth.tar",
-            #"/home/yangbang/VideoCaptioning/1107save/MSRVTT/GRU_LSTM/M_Seed0_EBN_WC20_SS1_0_75_base/best/0035_171117_173436_177300_178115_176612.pth.tar",
-            "/home/yangbang/VideoCaptioning/1107save/Youtube2Text/GRU_LSTM/MI_Seed0_EBN_SS1_0_75_base_Mi/best/0034_237815_249709_251475_249702_247184.pth.tar",
-            #"/home/yangbang/VideoCaptioning/1107save/Youtube2Text/GRU_LSTM/MI_Seed0_EBN_SS1_0_75_base_Im/best/0036_242729_256354_256557_258267_258265.pth.tar"
-            "/home/yangbang/VideoCaptioning/1107save/Youtube2Text/GRU_LSTM/MI_Seed0_EBN_SS1_0_75_base_Im/best/0015_238692_252909_253725_253461_251313.pth.tar"
+            "/home/yangbang/VideoCaptioning/0219save/Youtube2Text/GRU_LSTM/ADD0_WA0_EBN1_SS1_WC0_I_pan_lite/best/0036_225112_236269_235943_235829_233713.pth.tar",
+            "/home/yangbang/VideoCaptioning/0219save/Youtube2Text/GRU_LSTM/ADD0_WA0_EBN1_SS1_WC0_M-I_pan_full/best/0045_224531_234905_234775_234476_233589.pth.tar",
+            "/home/yangbang/VideoCaptioning/0219save/Youtube2Text/GRU_LSTM/ADD0_WA0_EBN1_SS1_WC0_A-M-I_pan_lite_full/best/0049_232514_237815_238561_241098_239263.pth.tar",
         ])
     parser.add_argument('--names', nargs='+', type=str, default=[
-            "Ami",
-            "Mai",
-            "Iam"
+            "lite",
+            "full",
+            'lf',
         ])
     opt = parser.parse_args()
 

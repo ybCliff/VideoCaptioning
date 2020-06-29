@@ -3,6 +3,30 @@ import torch
 import torch.nn as nn
 import models.Constants as Constants
 from torch.autograd import Variable
+
+def cosine_sim(im, s):
+    """Cosine similarity between all the image and sentence pairs
+    """
+    return im.mm(s.t())
+
+
+def order_sim(im, s):
+    """Order embeddings similarity measure $max(0, s-im)$
+    """
+    YmX = (s.unsqueeze(1).expand(s.size(0), im.size(0), s.size(1))
+           - im.unsqueeze(0).expand(s.size(0), im.size(0), s.size(1)))
+    score = -YmX.clamp(min=0).pow(2).sum(2).sqrt().t()
+    return score
+
+
+def euclidean_sim(im, s):
+    """Order embeddings similarity measure $max(0, s-im)$
+    """
+    YmX = (s.unsqueeze(1).expand(s.size(0), im.size(0), s.size(1))
+           - im.unsqueeze(0).expand(s.size(0), im.size(0), s.size(1)))
+    score = -YmX.pow(2).sum(2).t()
+    return score  
+
 class BagOfWordsLoss(nn.Module):
     def __init__(self, ignore_index=Constants.PAD):
         super(BagOfWordsLoss, self).__init__()
@@ -70,6 +94,78 @@ class CrossEntropyLoss(nn.Module):
         loss = self.loss_fn(logits, target)
         return loss
 '''
+
+
+
+class TripletLoss(nn.Module):
+    """
+    triplet ranking loss
+    """
+    def __init__(self, margin=0.2, measure='cosine', max_violation=True, cost_style='sum'):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+        self.cost_style = cost_style
+
+        assert measure in ['order', 'euclidean', 'cosine']
+        if measure == 'order':
+            self.sim = order_sim
+        elif measure == 'euclidean':
+            self.sim = euclidean_sim
+        else:
+            self.sim = cosine_sim
+
+        self.max_violation = max_violation
+
+    def forward_(self, s, im):
+        # compute image-sentence score matrix
+        scores = self.sim(im, s)
+        diagonal = scores.diag().view(im.size(0), 1)
+        d1 = diagonal.expand_as(scores)
+        d2 = diagonal.t().expand_as(scores)
+
+        # clear diagonals
+        mask = torch.eye(scores.size(0)) > .5
+        I = Variable(mask).to(s.device)
+
+        cost_s = (self.margin + scores - d1).clamp(min=0)
+        cost_s = cost_s.masked_fill_(I, 0)
+
+        cost_im = (self.margin + scores - d2).clamp(min=0)
+        cost_im = cost_im.masked_fill_(I, 0)
+
+        # keep the maximum violating negative for each query
+        if self.max_violation:
+            cost_s = cost_s.max(1)[0]
+            cost_im = cost_im.max(0)[0]
+
+        if self.cost_style == 'sum':
+            return cost_s.sum() + cost_im.sum()
+        else:
+            return cost_s.mean() + cost_im.mean()
+
+    def forward(self, embs):
+        assert isinstance(embs, list), 'there should be a list of embeddings from the encoder'
+        assert len(embs) >= 2, 'there should be at least two kinds of embeddings'
+        length = len(embs)
+        #embs = [item.mean(1) for item in embs] if len(embs[0].shape) == 3 else embs
+        loss = None
+        '''
+        for i in range(length-1):
+            for j in range(i+1, length):
+                if loss is None:
+                    loss = self.forward_(embs[i], embs[j])
+                else:
+                    loss += self.forward_(embs[i], embs[j])
+        return loss / ((length * (length - 1)) / 2), embs[0].size(0)
+        '''
+        for emb in embs[0]:
+            #print(emb.shape, embs[1].shape)
+            for another_emb in embs[1]:
+                if loss is None:
+                    loss = self.forward_(emb, another_emb)
+                else:
+                    loss += self.forward_(emb, another_emb)
+        return loss / (len(embs[0]) * len(embs[1])), embs[0][0].size(0)
 
 class CrossEntropyLoss(nn.Module):
     def __init__(self, ignore_index=None):
@@ -164,8 +260,7 @@ class SelfCritCriterion(nn.Module):
         self.keys = keys
 
     def forward(self, kwargs):
-        seq, sample_logprobs, reward = [kwargs[key] for key in self.keys]
-
+        seq, sample_logprobs, reward, probs = [kwargs[key] for key in self.keys]
         sample_logprobs = sample_logprobs.view(-1)   # (batch_size * max_len)
         reward = reward.view(-1)
         # set mask elements for all <end> tokens to 0 
@@ -178,8 +273,12 @@ class SelfCritCriterion(nn.Module):
             mask = mask.contiguous()
         
         mask = mask.view(-1)
-        output = - sample_logprobs * reward * mask
-        output = torch.sum(output) / torch.sum(mask)
+        if probs is not None:
+            probs = probs.view(-1)
+            output = - sample_logprobs * reward * mask * probs
+        else:    
+            output = - sample_logprobs * reward * mask
+        output = torch.sum(output) / seq.size(0) #torch.sum(mask)
         return output
 
 class Criterion(object):
@@ -304,24 +403,27 @@ class Criterion(object):
 
         loss = []
         for i in range(self.num_loss):
-            # prepare the predictions and its corresponding ground-truths
-            pred = results[self.keys[i][0]]
-            gt = results[self.keys[i][1]]
-            #print(gt)
-            #print(gt.max())
-
-            # calculate i-th loss
-            if isinstance(self.crit[i], DistillationLoss):
-                num_sample = gt.size(0)
-                if self.opt['na']:
-                    i_loss = self.crit[i](pred, gt, results['pure_target'])
-                else:
-                    i_loss = self.crit[i](pred, gt, results[Constants.mapping['lang'][1]])
-            elif isinstance(self.crit[i], SelfCritCriterion):
-                num_sample = pred.size(0)
-                i_loss = self.crit[i](results)
+            if isinstance(self.crit[i], TripletLoss):
+                i_loss, num_sample = self.crit[i](results[self.keys[i]])
             else:
-                num_sample, i_loss = self.check_and_cal(pred, gt, self.crit[i])
+                # prepare the predictions and its corresponding ground-truths
+                pred = results[self.keys[i][0]]
+                gt = results[self.keys[i][1]]
+                #print(gt)
+                #print(gt.max())
+
+                # calculate i-th loss
+                if isinstance(self.crit[i], DistillationLoss):
+                    num_sample = gt.size(0)
+                    if self.opt['na']:
+                        i_loss = self.crit[i](pred, gt, results['pure_target'])
+                    else:
+                        i_loss = self.crit[i](pred, gt, results[Constants.mapping['lang'][1]])
+                elif isinstance(self.crit[i], SelfCritCriterion):
+                    num_sample = pred.size(0)
+                    i_loss = self.crit[i](results)
+                else:
+                    num_sample, i_loss = self.check_and_cal(pred, gt, self.crit[i])
 
             # weighting i-th loss
             loss.append(i_loss * self.scales[i])
@@ -371,6 +473,7 @@ def get_criterion(opt):
         'dist': DistillationLoss(ignore_index=Constants.PAD), # bert distillation
         'beam': BDLoss(), #nn.NLLLoss(),  # beam candidate classification
         'self_crit': SelfCritCriterion(Constants.mapping['self_crit']),   # self-crit reinforcement learning
+        'triplet': TripletLoss(),
     }
     if opt.get('bow_loss', False):
         opt['crit'].append('bow')

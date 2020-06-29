@@ -124,7 +124,7 @@ def parse_opt():
 
     ######################### Saving #########################
     parser.add_argument('--checkpoint_path', type=str, default='/home/yangbang/VideoCaptioning/', help='directory to store checkpointed models')
-    parser.add_argument('--checkpoint_path_name', default='0219save', type=str)
+    parser.add_argument('--checkpoint_path_name', default='620save', type=str)
     parser.add_argument('--k_best_model', type=int, default=3, help='checkpoints with top-k performance will be saved')
     parser.add_argument('--save_checkpoint_every', type=int, default=1, help='how often to save a model checkpoint (in epoch)?')
     parser.add_argument('-fewf', '--first_evaluate_whole_folder', default=False, action='store_true')
@@ -271,6 +271,7 @@ def parse_opt():
 
     parser.add_argument('-kdwb', '--knowledge_distillation_with_bert', default=False, action='store_true')
     parser.add_argument('--bert_embeddings_name', type=str, default='word_embeddings.hdf5')
+    parser.add_argument('--bert_embeddings', type=str, default="/home/yangbang/VideoCaptioning/MSRVTT/feats/bert_embs_best_reduce_mean.hdf5")
     parser.add_argument('--dim_bert_embeddings', type=int, default=768)
 
     parser.add_argument('--paradigm', type=str, default='mp')
@@ -285,11 +286,25 @@ def parse_opt():
 
     # for zhangcan
     parser.add_argument('-upl', '--use_pan_lite', default=False, action='store_true')
+    parser.add_argument('-upf', '--use_pan_full', default=False, action='store_true')
+    parser.add_argument('-uplf', '--use_pan_lite_full', default=False, action='store_true')
 
     # reinforement learning
     parser.add_argument('-use_rl', '--use_rl', default=False, action='store_true')    
     parser.add_argument('--rl_cached_file', type=str, default='rl_cached')    
-    
+    parser.add_argument('-triplet', '--triplet', default=False, action='store_true')
+    parser.add_argument('-it', '--intra_triplet', default=False, action='store_true')
+
+    parser.add_argument('--not_all', default=False,action='store_true')
+
+    parser.add_argument('--multimodal_fusion_type', type=str, default='mean')
+    parser.add_argument('--num_heads', type=int, default=8)
+    parser.add_argument('--att_dropout', type=float, default=0)
+    parser.add_argument('--with_norm', default=False, action='store_true')
+    parser.add_argument('--shared_layernorm', default=False, action='store_true')
+    parser.add_argument('--with_residual', default=False, action='store_true')
+    parser.add_argument('--include_pivot', default=False, action='store_true')
+    parser.add_argument('--mm_watch', type=int, default=1)
 
     args = parser.parse_args()
     args.all_caps_a_round = True
@@ -299,7 +314,7 @@ def parse_opt():
     if args.dataset == 'Youtube2Text':
         args.max_len = 20
         args.word_count_threshold = 0
-        args.feats_a_name = [''] if 'a' not in args.modality else ['msvd_vggish.hdf5', 'msvd_boaw256.hdf5', 'msvd_fvdb_260.hdf5']
+        #args.feats_a_name = [''] if 'a' not in args.modality else ['msvd_vggish.hdf5', 'msvd_boaw256.hdf5', 'msvd_fvdb_260.hdf5']
         args.with_category = False
 
     if args.ar:
@@ -402,9 +417,10 @@ def parse_opt():
                 args.feats_i_name = ['resnet101_60.hdf5']
                 args.scope = 'eco2'
             else:
-                args.feats_m_name = ['kinetics_16_8.hdf5']
+                #args.feats_m_name = ['kinetics_16_8.hdf5']
                 args.feats_i_name = ['resnet101_60.hdf5']
-                args.feats_a_name = ['msrvtt_vggish_60.hdf5', 'vtt_boaw256.hdf5', 'fvdb_260.hdf5']
+                #args.feats_a_name = ['msrvtt_vggish_60.hdf5', 'vtt_boaw256.hdf5', 'fvdb_260.hdf5']
+                args.feats_a_name=[]
 
         if args.use_tag:
             #args.feats_t_name = ['attribute_tag.hdf5']
@@ -442,8 +458,8 @@ def parse_opt():
             args.scope += 'ubd'
 
         
-        #pass
     # for zhangcan
+    # CUDA_VISIBLE_DEVICES=2 python train.py -upf -d Youtube2Text -td -ss
     if args.use_pan_lite:
         assert args.dataset == 'Youtube2Text'
         args.modality = 'i'
@@ -453,6 +469,28 @@ def parse_opt():
         args.dim_m = args.dim_a = 1
         args.load_feats_type = 0
         args.scope += 'pan_lite'
+
+    if args.use_pan_full:
+        assert args.dataset == 'Youtube2Text'
+        args.modality = 'mi'
+        args.dim_m = args.dim_i = 2048
+        args.feats_m_name = ['pan_full_pa.hdf5']
+        args.feats_i_name = ['pan_full_rgb.hdf5']
+        args.feats_a_name = []
+        args.dim_a = 1
+        args.load_feats_type = 0
+        args.scope += 'pan_full'
+
+    if args.use_pan_lite_full:
+        #CUDA_VISIBLE_DEVICES=0 python train.py -td -m mi --feats_m_name 'pan_full_pa.hdf5' -ss -d Youtube2Text --scope i_pa
+        assert args.dataset == 'Youtube2Text'
+        args.modality = 'ami'
+        args.dim_a = args.dim_m = args.dim_i = 2048
+        args.feats_a_name = ['pan_lite.hdf5']
+        args.feats_m_name = ['pan_full_pa.hdf5']
+        args.feats_i_name = ['pan_full_rgb.hdf5']
+        args.load_feats_type = 0
+        args.scope += 'pan_lite_full'
 
     # reinforcement learning
     args.rl_cached_file = os.path.join(args.base_dir, args.dataset, args.rl_cached_file + '_%d'%args.word_count_threshold)
@@ -465,6 +503,11 @@ def parse_opt():
         args.tolerence = 10
         args.k_best_model = 1
         args.standard = ['CIDEr']
+
+    if args.triplet:
+        args.crit.append('triplet')
+        args.crit_name.append('VT match loss')
+        args.crit_scale.append(1.0)
 
     args.crit_key = [Constants.mapping[item.lower()] for item in args.crit]
     return args

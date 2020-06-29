@@ -917,7 +917,7 @@ class Top_Down_Decoder(nn.Module):
     def forward(self, **kwargs):
         # get the infomation we need from the kwargs
         it, encoder_outputs, category, decoder_hidden, tag = map(
-            lambda x: kwargs[x], 
+            lambda x: kwargs.get(x, None), 
             ["it", "encoder_outputs", "category", "decoder_hidden", "tag"]
         )
         current_words = self.embedding(it)

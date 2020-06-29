@@ -30,7 +30,7 @@ from .logger import CsvLogger, k_PriorityQueue
 from collections import defaultdict
 import pickle
 import time
-
+import copy
 def save_checkpoint(state, is_best, filepath='./', filename='checkpoint.pth.tar', best_model_name='model_best.pth.tar'):
     if not os.path.exists(filepath):
         os.makedirs(filepath)
@@ -192,9 +192,9 @@ def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weig
     # ground_truth is the 5 ground truth captions for a mini-batch, which can be aquired from the preprocess_gd function
     #[[c1, c2, c3, c4, c5], [c1, c2, c3, c4, c5],........]. Note that c is a caption placed in a list
     # len(ground_truth) = batch_size. Already duplicated the ground truth captions in dataloader
-    
+    tmp = gen_result.clone()
     batch_size = gen_result.size(0)  
-    assert len(gts.keys()) == batch_size
+    assert len(gts.keys()) == batch_size // opt.get('seq_per_video', 1)
 
     res = OrderedDict()
     gen_result = gen_result.data.cpu().numpy()   # (batch_size, max_len)
@@ -203,19 +203,26 @@ def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weig
     pt = []
     for i in range(batch_size):
         # change to string for evaluation purpose 
-        res[i] = [to_sentence(gen_result[i], vocab)]
-        pt.append(to_sentence(gen_result[i], vocab))
+        res[i] = [to_sentence(gen_result[i], add_eos=opt['use_eos'])]
+        pt.append(res[i][0])
         
     for i in range(batch_size):
         # change to string for evaluation purpose
-        res[batch_size + i] = [to_sentence(greedy_res[i], vocab)]
+        res[batch_size + i] = [to_sentence(greedy_res[i], add_eos=opt['use_eos'])]
         #tqdm.write(to_sentence(greedy_res[i], vocab) + '\t' + pt[i])
 
     # 2 is because one is for the sampling and one for greedy decoding
     res_ = [{'image_id':i, 'caption': res[i]} for i in range(2 * batch_size)] 
     # the number of ground-truth captions for each image stay the same as above. Duplicate for the sampling and greedy
-    gts = {i: gts[i % batch_size] for i in range(2 * batch_size)}
+    gts = {i: gts[(i % batch_size) // opt.get('seq_per_video', 1)] for i in range(2 * batch_size)}
     _, cider_scores = scorer.compute_score(gts, res_)
+
+    #print('--')
+    #print(res[0], len(res[0][0].split(' ')))
+    #print(res[batch_size], len(res[batch_size][0].split(' ')))
+    # print(gts[0])
+    #print(tmp[0].gt(0).sum(), tmp[0])
+    #assert tmp[0].gt(0).sum() == len(res[0][0].split(' '))
 
     scores = cider_weight * cider_scores
     scores = scores[:batch_size] - scores[batch_size:]
@@ -224,6 +231,8 @@ def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weig
 
     return rewards
 
+global_model = None
+
 def get_forward_results_rl(opt, model, data, device, vocab, references):
     """
         This function is for reinforcement learning.
@@ -231,7 +240,7 @@ def get_forward_results_rl(opt, model, data, device, vocab, references):
     """
     # (1) prepare features
     feats_i, feats_m, feats_a, category = map(
-            lambda x: x.to(device), 
+            lambda x: enlarge(x.to(device), opt.get('seq_per_video', 1)), 
             [data['feats_i'], data['feats_m'], data['feats_a'], data['category']]
         )
     mapping = {
@@ -249,25 +258,32 @@ def get_forward_results_rl(opt, model, data, device, vocab, references):
     vids = data['video_ids']
     gts = OrderedDict()
     for i, vid in enumerate(vids):
-        gts[i] = [item['caption'] for item in references[vid]]
-        #gts[i] = [to_sentence(item[1:], vocab) for item in references[vid]]
+        #gts[i] = [item['caption'] for item in references[vid]]
+        gts[i] = [to_sentence(item[1:], add_eos=opt['use_eos']) for item in references[vid]]
 
     # (2) Get greedy sequences, sampled sequences & logprobs
     model.eval()
     with torch.no_grad():
-        greedy_res, _ = model(feats=feats, category=category, sample_max=True, sample_rl=False, opt=opt)
+        greedy_res, _, _ = model(feats=feats, category=category, sample_max=True, sample_rl=False, opt=opt)
         # tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
     model.train()
-    seq_gen, seqLogprobs = model(feats=feats, category=category, sample_max=False, sample_rl=True, opt=opt)
+    # global global_model
+    # if global_model is None:
+    #     global_model = copy.deepcopy(model)
+    seq_gen, seqLogprobs, probs = model(feats=feats, category=category, sample_max=False, sample_rl=True, opt=opt)#, ori_model=global_model)
+    #print(probs[0][:3])
 
     #print(gts[0])
     #tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
     tqdm.write(to_sentence(seq_gen[0].cpu().numpy(), vocab))
+    #tqdm.write(to_sentence(seq_gen[0].cpu().numpy(), vocab) + '\t' + to_sentence(seq_gen[1].cpu().numpy(), vocab))
+    #tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab) + '\t' + to_sentence(greedy_res[1].cpu().numpy(), vocab))
+
 
     # (3) Calculate the rewards
     rewards = get_self_critical_reward(opt, seq_gen, greedy_res, gts, vocab, cider_weight = 1)
 
-    return {k: v for k, v in zip(Constants.mapping['self_crit'], [seq_gen, seqLogprobs, rewards.to(device)])}
+    return {k: v for k, v in zip(Constants.mapping['self_crit'], [seq_gen, seqLogprobs, rewards.to(device), probs.detach() if probs is not None else None])}
 
 
 def get_forword_results_bd(opt, model, data, device, only_data=False, vocab=None):
@@ -301,7 +317,7 @@ def get_forword_results_bd(opt, model, data, device, only_data=False, vocab=None
 
 def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1, bd=False):
     func = BD_Dataset if bd else VideoDataset
-    dataset = func(opt, mode, print_info, specific=specific, target_ratio=target_ratio)
+    dataset = func(opt, mode, print_info, specific=specific)
     if opt.get('splits_redefine_path', ''):
         dataset.set_splits_by_json_path(opt['splits_redefine_path']) 
     return DataLoader(
@@ -311,17 +327,22 @@ def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1, bd=Fal
         #shuffle=False
         )
 
-def to_sentence(hyp, vocab, break_words=[Constants.EOS, Constants.PAD], skip_words=[]):
+def to_sentence(hyp, vocab=None, break_words=[Constants.EOS, Constants.PAD], skip_words=[], add_eos=False):
     sent = []
     for word_id in hyp:
         if word_id in skip_words:
             continue
         if word_id in break_words:
             break
-        word = vocab[word_id]
+        if vocab is None:
+            word = str(word_id)
+        else:
+            word = vocab[word_id]
         #if word == Constants.UNK_WORD:
         #    word = '-'
         sent.append(word)
+    if add_eos:
+        sent.append(Constants.EOS_WORD)
     return ' '.join(sent)
 
 def remove_repeat_n_grame(sent, n):
@@ -716,21 +737,34 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
 
     return res
     
-def run_eval_ensemble(opt, opt_list, models, crit, loader, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False, no_score=False, analyze=False):
+def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False, no_score=False, analyze=False):
+    assert len(models) == len(opt_list)
+    assert len(models) == len(loader_list)
     translator = Translator_ensemble(model=models, opt=opt)
 
-    videodatainfo = json.load(open(opt["input_json"]))
-    gt_dataframe = json_normalize(videodatainfo['sentences'])
-    gts = convert_data_to_coco_scorer_format(gt_dataframe) 
+    gts = loader_list[0].dataset.get_references()
     samples = {}
     sentences = []
     
-    for data in tqdm(loader, ncols=150, leave=False):
+    loader_list = [iter(item) for item in loader_list]
+    while True:
         with torch.no_grad():
+            data_list = []
+            stop = False
+            for i in range(len(opt_list)):
+                try:
+                    data = loader_list[i].next()
+                    data_list.append(data)
+                except StopIteration:
+                    stop = True
+            if stop:
+                break
+
             enc_output = []
             enc_hidden = []
+
             for i, model in enumerate(models):
-                encoder_outputs, category, _ = get_forword_results(opt_list[i], model, data, device=device, only_data=True)
+                encoder_outputs, category, *_ = get_forword_results(opt_list[i], model, data_list[i], device=device, only_data=True)
                 enc_output.append(encoder_outputs['enc_output'])
                 enc_hidden.append(encoder_outputs['enc_hidden'])
 
@@ -760,14 +794,14 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader, vocab, device, json_p
                 sentences.append({'caption': sent, 'video_id': video_id, 'sen_id': index})
                 index += 1
     res = {}
-    if analyze:
-        gt_caption = json.load(open(opt['caption_json']))
-        ave_length, novel, unique, usage, hy_res = analyze_length_novel_unique(gt_caption, samples, n=1, dataset=opt['dataset'])
-        res.update({'ave_length': ave_length, 'novel': novel, 'unique': unique, 'usage': usage})   
+    #if analyze:
+    #    gt_caption = json.load(open(opt['caption_json']))
+    #    ave_length, novel, unique, usage, hy_res = analyze_length_novel_unique(gt_caption, samples, n=1, dataset=opt['dataset'])
+    #    res.update({'ave_length': ave_length, 'novel': novel, 'unique': unique, 'usage': usage})   
 
     if not no_score:
         with suppress_stdout_stderr():
-            valid_score = scorer.score(gts, samples, samples.keys())
+            valid_score, _ = scorer.score(gts, samples, samples.keys())
 
         res.update(valid_score)
         res['loss'] = 0
@@ -797,7 +831,7 @@ def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_c
         optimizer.zero_grad()
         
         if opt.get('use_rl', False):
-            results = get_forward_results_rl(opt, model, data, device, loader.dataset.get_vocab(), loader.dataset.get_references())
+            results = get_forward_results_rl(opt, model, data, device, loader.dataset.get_vocab(), loader.dataset.get_preprocessed_references()) #loader.dataset.get_references())
         else:
             func = get_forword_results_bd if bd else get_forword_results
             vocab = None if bd else loader.dataset.get_vocab()
@@ -843,7 +877,8 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     best_model = k_PriorityQueue(
         k_best_model = opt.get('k_best_model', 5), 
         folder_path = folder_path,
-        standard = opt.get('standard', ['METEOR', 'CIDEr'])
+        standard = opt.get('standard', ['METEOR', 'CIDEr']),
+        init_res = opt.get('init_res', {})
         )
 
     #train_loader = get_loader(opt, 'train', print_info=False)
@@ -881,6 +916,13 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
             if epoch < start_epoch: 
                 continue 
 
+            if epoch == start_epoch and opt.get('eval_first', False):
+                new_opt = opt.copy()
+                new_opt.update(opt.get('rl_opt', {}))
+                res = run_eval(new_opt, model, crit, vali_loader, vocab, device, print_sent=opt.get('print_sent', False))
+                _, info = best_model.check(res, '', '', opt)
+                logger.write_text(info)
+
             train_loader = get_loader(opt, 'train', print_info=False)
             #train_loader.dataset.shuffle()
             # decide the masking probability
@@ -888,17 +930,23 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
                 opt['teacher_prob'] = get_teacher_prob(epoch+1, opt['ss_k'], opt['ss_linear'], opt['ss_piecewise'], opt['ss_type'], max_epoch=opt.get('ss_epochs', opt['epochs']))
                 train_loader.dataset.mask_prob = opt['teacher_prob']
             
-            logger.write_text("epoch %d lr=%g (ss_prob=%g)" % (epoch, optimizer.get_lr(), opt.get('teacher_prob', 1)))
-            # training
             
-
-            train_loss = run_train(opt, model, crit, optimizer, train_loader, device, logger=logger, epoch=epoch)
-
+            # training
+            '''
             if opt.get('use_rl', False):
                 if best_model.continuous_failed_count > 0:
                     optimizer.epoch_update_learning_rate()
-            else:
-                optimizer.epoch_update_learning_rate()
+                    if opt['load_the_best_checkpoint']:
+                        best_model.load_the_best_checkpoint(model)
+            '''
+
+            logger.write_text("epoch %d lr=%g (ss_prob=%g)" % (epoch, optimizer.get_lr(), opt.get('teacher_prob', 1)))
+
+            train_loss = run_train(opt, model, crit, optimizer, train_loader, device, logger=logger, epoch=epoch)
+
+            
+            #if not opt.get('use_rl', False):
+            optimizer.epoch_update_learning_rate()
 
             # logging
             if epoch < opt['start_eval_epoch'] - 1:
@@ -911,10 +959,10 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
             elif (epoch+1) % opt["save_checkpoint_every"] == 0:
                 if opt.get('use_rl', False):
                     new_opt = opt.copy()
-                    new_opt.update({'beam_size': 5, 'beam_alpha': 1.0})
+                    new_opt.update(opt.get('rl_opt', {}))
                 else:
                     new_opt = opt
-                res = run_eval(new_opt, model, crit, vali_loader, vocab, device)
+                res = run_eval(new_opt, model, crit, vali_loader, vocab, device, print_sent=opt.get('print_sent', False))
                 res['train_loss'] = train_loss
                 res['epoch'] = epoch
                 res['val_loss'] = res['loss']

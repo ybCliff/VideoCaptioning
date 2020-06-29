@@ -569,10 +569,19 @@ class Translator_ensemble(object):
             if isinstance(enc_hidden, list):
                 active_hidden = []
                 for i in range(len(enc_hidden)):
-                    assert isinstance(enc_hidden[i], tuple)
-                    tmp1 = self.collect_active_part(enc_hidden[i][0], active_inst_idx, n_prev_active_inst, n_bm)
-                    tmp2 = self.collect_active_part(enc_hidden[i][1], active_inst_idx, n_prev_active_inst, n_bm)
-                    active_hidden.append((tmp1, tmp2))
+                    if isinstance(enc_hidden[i], list):
+                        ah = []
+                        for j in range(len(enc_hidden[i])):
+                            assert isinstance(enc_hidden[i][j], tuple)
+                            tmp1 = self.collect_active_part(enc_hidden[i][j][0], active_inst_idx, n_prev_active_inst, n_bm)
+                            tmp2 = self.collect_active_part(enc_hidden[i][j][1], active_inst_idx, n_prev_active_inst, n_bm)
+                            ah.append((tmp1, tmp2))
+                        active_hidden.append(ah)
+                    else:
+                        assert isinstance(enc_hidden[i], tuple)
+                        tmp1 = self.collect_active_part(enc_hidden[i][0], active_inst_idx, n_prev_active_inst, n_bm)
+                        tmp2 = self.collect_active_part(enc_hidden[i][1], active_inst_idx, n_prev_active_inst, n_bm)
+                        active_hidden.append((tmp1, tmp2))
             else:
                 assert isinstance(enc_hidden, tuple)
                 tmp1 = self.collect_active_part(enc_hidden[0], active_inst_idx, n_prev_active_inst, n_bm)
@@ -620,7 +629,14 @@ class Translator_ensemble(object):
             def predict_word(dec_seq, enc_output, enc_hidden, n_active_inst, n_bm, category):
                 word_prob = []
                 for i in range(len(enc_output)):
-                    dec_output, enc_hidden[i], *_ = self.model[i].decoder(dec_seq, enc_output[i], category, enc_hidden[i])
+                    res = self.model[i].decoder(
+                        it=dec_seq, 
+                        encoder_outputs=enc_output[i], 
+                        category=category, 
+                        decoder_hidden=enc_hidden[i]
+                        )
+                    dec_output, enc_hidden[i] = res['dec_outputs'], res['dec_hidden']
+
                     tmp = F.log_softmax(self.model[i].tgt_word_prj(dec_output), dim=1)
                     tmp = tmp.view(n_active_inst, n_bm, -1)
                     word_prob.append(tmp)
@@ -628,14 +644,11 @@ class Translator_ensemble(object):
                 word_prob = torch.stack(word_prob, dim=0).mean(0)
                 return word_prob, enc_hidden
 
-            def collect_active_hidden(inst_beams, inst_idx_to_position_map, enc_hidden, n_bm):
-                assert isinstance(enc_hidden, list)
-                n_curr_active_inst = len(inst_idx_to_position_map)
-
-                for i in range(len(enc_hidden)):
-                    tmp1, tmp2 = enc_hidden[i]
+            def collect_active_hidden_single(inst_beams, inst_idx_to_position_map, enc_hidden, n_bm):
+                if isinstance(enc_hidden, tuple):
+                    tmp1, tmp2 = enc_hidden
                     _, *d_hs = tmp1.size()
-                    
+                    n_curr_active_inst = len(inst_idx_to_position_map)
                     new_shape = (n_curr_active_inst * n_bm, *d_hs)
                     tmp1 = tmp1.view(n_curr_active_inst, n_bm, -1)
                     tmp2 = tmp2.view(n_curr_active_inst, n_bm, -1)
@@ -649,8 +662,32 @@ class Translator_ensemble(object):
                     #print('after h:', tmp1)
                     tmp1 = tmp1.view(*new_shape)
                     tmp2 = tmp2.view(*new_shape)
-                    enc_hidden[i] = (tmp1, tmp2)
+                    enc_hidden = (tmp1, tmp2)
+                else:
+                    _, *d_hs = enc_hidden.size()
+                    n_curr_active_inst = len(inst_idx_to_position_map)
+                    new_shape = (n_curr_active_inst * n_bm, *d_hs)
+                    enc_hidden = enc_hidden.view(n_curr_active_inst, n_bm, -1)
+
+                    for inst_idx, inst_position in inst_idx_to_position_map.items():
+                        _prev_ks = inst_beams[inst_idx].get_current_origin()
+                        enc_hidden[inst_position] = enc_hidden[inst_position].index_select(0, _prev_ks)
+
+                    enc_hidden = enc_hidden.view(*new_shape)
+ 
                 return enc_hidden 
+
+            def collect_active_hidden(inst_beams, inst_idx_to_position_map, enc_hidden, n_bm):
+                if enc_hidden is None:
+                    return None
+                if isinstance(enc_hidden, list):
+                    hidden = []
+                    for item in enc_hidden:
+                        hidden.append(collect_active_hidden_single(inst_beams, inst_idx_to_position_map, item, n_bm))
+                else:
+                    hidden = collect_active_hidden_single(inst_beams, inst_idx_to_position_map, enc_hidden, n_bm)
+                return hidden
+                
 
             n_active_inst = len(inst_idx_to_position_map)
             dec_seq = prepare_beam_dec_seq(inst_dec_beams)
@@ -662,7 +699,11 @@ class Translator_ensemble(object):
             active_inst_idx_list = self.collect_active_inst_idx_list(
                 inst_dec_beams, word_prob, inst_idx_to_position_map)
 
-            enc_hidden = collect_active_hidden(inst_dec_beams, inst_idx_to_position_map, enc_hidden, n_bm)
+            #print(type(enc_hidden))
+            #print(type(enc_hidden[0]))
+            #print(type(enc_hidden[0][0]))
+            #print(type(enc_hidden[0][0][0]))
+            enc_hidden = [collect_active_hidden(inst_dec_beams, inst_idx_to_position_map, item, n_bm) for item in enc_hidden]
             return active_inst_idx_list, enc_hidden
 
         with torch.no_grad():

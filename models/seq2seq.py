@@ -6,6 +6,39 @@ from tqdm import tqdm
 import math
 from torch.nn.parameter import Parameter
 
+def l2norm(X):
+    """L2-normalize columns of X
+    """
+    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
+    X = torch.div(X, norm)
+    return X
+
+class Feat2Emb(nn.Module):
+    def __init__(self, in_size, out_size, chunk=1, c=True):
+        super(Feat2Emb, self).__init__()
+        self.pjt = nn.ModuleList([nn.Linear(in_size, out_size) for _ in range(chunk)])
+        for item in self.pjt:
+            nn.init.xavier_normal_(item.weight)
+        self.chunk = chunk
+        self.c = c
+
+    def forward(self, feats):
+        if self.chunk > 1:
+            if self.c:
+                assert len(feats.shape) == 3
+                feats = feats.chunk(self.chunk, dim=1)
+            assert isinstance(feats, list)
+            feats = [item.mean(1) for item in feats]
+        else:
+            if len(feats.shape) == 3:
+                feats = feats.mean(1)
+            feats = [feats]
+
+        outputs = [l2norm(self.pjt[i](feats[i])) for i in range(self.chunk)]
+        return outputs
+
+
+
 class Seq2Seq(nn.Module):
     def __init__(self, 
                 preEncoder=None, 
@@ -63,6 +96,14 @@ class Seq2Seq(nn.Module):
             self.attribute_predictor = None
         self.beam_decoder = beam_decoder
 
+        self.triplet = opt.get('triplet', False)
+        self.intra_triplet = opt.get('intra_triplet', False)
+        
+        if self.triplet and not self.intra_triplet:
+            #self.v2e = Feat2Emb(512, 512, 2)
+            self.v2e = Feat2Emb(512, 512, 2, False)
+            self.t2e = Feat2Emb(768, 512)
+
 
     def encode(self, feats, semantics=None):
         results = {}
@@ -79,6 +120,13 @@ class Seq2Seq(nn.Module):
 
         if self.joint_representation_learner is not None:
             encoder_outputs, encoder_hiddens = self.joint_representation_learner(encoder_outputs, encoder_hiddens)
+            
+        if self.intra_triplet:
+            assert len(encoder_outputs) == 3
+            results[Constants.mapping['triplet']] = [[item.mean(1) for item in encoder_outputs[:2]], [encoder_outputs[-1].mean(1)]]
+            encoder_outputs = torch.cat(encoder_outputs[:2], dim=1)
+        else:
+            results[Constants.mapping['triplet']] = encoder_outputs[0] if isinstance(encoder_outputs, list) else encoder_outputs
 
         if self.auxiliary_task_predictor is not None:
             auxiliary_results = self.auxiliary_task_predictor(encoder_outputs)
@@ -164,7 +212,7 @@ class Seq2Seq(nn.Module):
 
     def forward_ARFormer(self, kwargs):
         feats, tgt_tokens, category, bert_embs = map(
-            lambda x: kwargs[x], 
+            lambda x: kwargs.get(x, None), 
             ["feats", "tgt_tokens", "category", "bert_embs"]
         )
 
@@ -189,25 +237,39 @@ class Seq2Seq(nn.Module):
             seq_probs = F.log_softmax(self.tgt_word_prj(seq_probs), dim=-1)
 
 
-        if bert_embs is not None:
-            assert self.bert_embs_to_hidden is not None
-            bert_embs = self.bert_embs_to_hidden(bert_embs)
+        #if bert_embs is not None:
+        #    assert self.bert_embs_to_hidden is not None
+        #    bert_embs = self.bert_embs_to_hidden(bert_embs)
 
         if self.attribute_predictor is not None:
             pred_attr = self.attribute_predictor(pred_embs)
         else:
             pred_attr = None
 
-        return {Constants.mapping['lang'][0]: seq_probs, Constants.mapping['attr'][0]: encoder_outputs.get(Constants.mapping['attr'][0], None),
+        results = {}
+        results[Constants.mapping['triplet']] = encoder_outputs[Constants.mapping['triplet']]
+        if self.triplet and not self.intra_triplet:
+            assert bert_embs is not None
+            #print(pred_embs.shap)
+            results[Constants.mapping['triplet']] = [
+                    #self.v2e(encoder_outputs[Constants.mapping['triplet']]), 
+                    self.v2e(pred_embs),
+                    self.t2e(bert_embs)
+                    ]
+
+        results.update({Constants.mapping['lang'][0]: seq_probs, Constants.mapping['attr'][0]: encoder_outputs.get(Constants.mapping['attr'][0], None),
                 Constants.mapping['dist'][0]: pred_embs, Constants.mapping['dist'][1]: bert_embs,
                 Constants.mapping['attr2'][0]: pred_attr
-        }
+        })
+
+        return results
+
 
 
     def forward_ARFormer_rl(self, kwargs):
-        feats, category, sample_max, sample_rl = map(
-            lambda x: kwargs[x], 
-            ["feats", "category", "sample_max", "sample_rl"]
+        feats, category, sample_max, sample_rl, ori_model = map(
+            lambda x: kwargs.get(x, None), 
+            ["feats", "category", "sample_max", "sample_rl", 'ori_model']
         )
         temperature = kwargs.get('temperature', 1)
         mixer_from = 0
@@ -224,6 +286,18 @@ class Seq2Seq(nn.Module):
         # use to record the sampled results
         seq = []
         seqLogprobs = []
+        rl_prob = 1
+        
+        def scheduled(sample_mask, logprobs, temperature=1):
+            prob_prev = torch.exp(torch.div(logprobs, temperature))     # fetch prev distribution (softmax)
+            it = torch.multinomial(prob_prev, 1).view(-1).long()
+
+            if sample_mask.sum() != 0:
+                tmp_it = torch.max(logprobs, 1)[1].view(-1).long()
+                sample_ind = sample_mask.nonzero().view(-1)
+                it.index_copy_(0, sample_ind, tmp_it.index_select(0, sample_ind))
+
+            return it
 
         # initialize the sequence as the begin-of-sentence token
         tgt_seq = [enc_output.new(batch_size, 1).fill_(Constants.BOS).long()]
@@ -243,6 +317,10 @@ class Seq2Seq(nn.Module):
                 it = it.view(-1).long()
 
             if sample_rl:# Sampling from multinomial for self-critical
+                sample_mask = enc_output.new(batch_size).uniform_(0, 1) > rl_prob
+                it = scheduled(sample_mask, logprobs)
+                sampleLogprobs = logprobs.gather(1, it.view(batch_size, 1))
+                '''
                 if timestep >= mixer_from:
                     prob_prev = torch.exp(torch.div(logprobs, temperature))     # fetch prev distribution (softmax)
 
@@ -253,7 +331,7 @@ class Seq2Seq(nn.Module):
                 else:
                     sampleLogprobs, it = torch.max(logprobs, 1)
                     it = it.view(-1).long()
-                
+                '''
                 
             # Replace <end> token (if there is) with 0, i.e., Constants.PAD
             it = it.clone()
@@ -264,6 +342,8 @@ class Seq2Seq(nn.Module):
             #print(unfinished)
             # record
             it = it * unfinished.type_as(it)
+            #it = torch.where(it.eq(Constants.EOS), it, it * unfinished.type_as(it)) # <eos> will participate the calculation of rewards
+
             seq.append(it)
             seqLogprobs.append(sampleLogprobs.view(-1))
             
@@ -274,7 +354,20 @@ class Seq2Seq(nn.Module):
             if unfinished.sum() == 0:
                 break
 
-        return torch.stack(seq, 1), torch.stack(seqLogprobs, 1)
+        seq = torch.stack(seq, 1)
+        if ori_model is not None:
+            ori_model.eval()
+            seq_with_bos = torch.cat([seq.new(seq.size(0), 1).fill_(Constants.BOS), seq], dim=1)
+            res = self.forward_ARFormer(
+                    {'feats': feats, 'tgt_tokens': seq_with_bos, 'category': category}
+                )
+            probs = torch.exp(res[Constants.mapping['lang'][0]][-1])
+            probs = probs.gather(2, seq.unsqueeze(2)).squeeze(2)
+        else:
+            probs = None
+
+
+        return seq, torch.stack(seqLogprobs, 1), probs
 
 
     def forward_LSTM_rl(self, kwargs):
@@ -292,13 +385,13 @@ class Seq2Seq(nn.Module):
         enc_output, enc_hidden = encoder_outputs['enc_output'], encoder_outputs['enc_hidden']
 
         max_len = 16 #self.opt['max_len']
-        batch_size, device = enc_output.size(0), enc_output.device
+        batch_size, device = enc_hidden.size(0), enc_hidden.device
 
         # use to record the sampled results
         seq = []
         seqLogprobs = []
 
-        it = enc_output.new(batch_size, 1).fill_(Constants.BOS).long()
+        it = enc_hidden.new(batch_size).fill_(Constants.BOS).long()
         state = self.decoder.init_hidden(enc_hidden)
 
         for timestep in range(max_len - 1):

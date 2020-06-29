@@ -8,6 +8,7 @@ from .encoder import Encoder_Baseline, Progressive_Encoder, SVD_Encoder, Input_E
 from .rnn import ENSEMBLE_Decoder 
 from .joint_representation import Joint_Representaion_Learner
 from .predictor import Auxiliary_Task_Predictor
+from .MultiModalEncoder import MultiModalEncoder
 import torch
 import torch.nn as nn
 
@@ -54,6 +55,24 @@ def get_encoder(opt, input_size, mapping, modality):
                 name=modality.upper(), 
                 dropout=opt['encoder_dropout']
             )
+    elif opt['encoder_type'] == 'MME':
+        encoder = MultiModalEncoder(
+            input_size=input_size, 
+            hidden_size=opt['dim_hidden'], 
+            dropout=opt['encoder_dropout'], 
+            name=opt['modality'].upper(), 
+            
+            multimodal_fusion_type=opt.get('multimodal_fusion_type', 'mean'),
+            num_heads=opt.get('num_heads', 8),
+            att_dropout=opt.get('att_dropout', 0.0),
+            with_layernorm=opt.get('with_norm', True),
+            shared_layernorm=opt.get('shared_layernorm', False),
+            with_residual=opt.get('with_residual', True),
+            pivot_idx=0,
+            include_pivot=opt.get('include_pivot', False),
+            n_frames=opt['n_frames'], 
+            watch=opt.get('mm_watch', 1)
+        )
     elif opt['encoder_type'] == 'GRU':
         if opt.get('use_chain', False):
             encoder = Progressive_Encoder(
@@ -190,8 +209,10 @@ def get_model(opt):
     preEncoder, input_size = get_preEncoder(opt, input_size)
     encoder = get_encoder(opt, input_size, mapping, modality)
 
-
-    joint_representation_learner = get_joint_representation_learner(opt)
+    if opt.get('intra_triplet', False) or opt['encoder_type'] == 'MME':
+        joint_representation_learner = None
+    else:
+        joint_representation_learner = get_joint_representation_learner(opt)
 
     if len(opt['crit']) == 1:
         # only the main task: language generation

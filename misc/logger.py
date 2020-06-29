@@ -149,15 +149,21 @@ class ModelNode(object):
         return self.res[self.key] < other.res[self.key]   
 
 class k_PriorityQueue(object):
-    def __init__(self, k_best_model, folder_path, standard=['METEOR', 'CIDEr']):
+    def __init__(self, k_best_model, folder_path, standard=['METEOR', 'CIDEr'], init_res={}):
         self.k_best_model = k_best_model
         self.queue = PriorityQueue()
         self.folder_path = folder_path
 
         self.continuous_failed_count = 0
         self.key = 'Sum'
-        self.best_res = {self.key: 0, 'Bleu_4':0, 'METEOR':0, 'ROUGE_L':0, 'CIDEr':0} # rethe best overall score
-        self.best_ = {k: 0 for k in standard}
+        if len(init_res):
+            assert len(init_res) == 5
+            assert self.key in init_res.keys()
+            self.best_res = init_res
+            self.queue.put(ModelNode(init_res, ''))
+        else:
+            self.best_res = {self.key: 0, 'Bleu_4':0, 'METEOR':0, 'ROUGE_L':0, 'CIDEr':0} # rethe best overall score
+        self.best_ = {k: self.best_res[k] for k in standard}
 
 
     def score(self, res):
@@ -194,13 +200,15 @@ class k_PriorityQueue(object):
             if res['Sum'] > node.res['Sum']:
                 self.continuous_failed_count = 0
                 self.queue.put(ModelNode(res, model_path))
-                # move current checkpoint to the folder_path
-                shutil.copy(
-                    os.path.join(opt["checkpoint_path"], 'checkpoint.pth.tar'), 
-                    os.path.join(self.folder_path, model_name)
-                    )
-                # remove the previous checkpoint to save disk space
-                os.remove(os.path.join(self.folder_path, 'model_%04d.pth.tar' % node.res['epoch']))
+                if model_path:
+                    # move current checkpoint to the folder_path
+                    shutil.copy(
+                        os.path.join(opt["checkpoint_path"], 'checkpoint.pth.tar'), 
+                        os.path.join(self.folder_path, model_name)
+                        )
+                if node.model_path:
+                    # remove the previous checkpoint to save disk space
+                    os.remove(os.path.join(self.folder_path, 'model_%04d.pth.tar' % node.res['epoch']))
             else:
                 self.queue.put(node)
                 self.continuous_failed_count += 1
@@ -209,10 +217,11 @@ class k_PriorityQueue(object):
                     return False, self.continuous_failed_count
         else:
             self.queue.put(ModelNode(res, model_path))
-            shutil.copy(
-                os.path.join(opt["checkpoint_path"], 'checkpoint.pth.tar'), 
-                os.path.join(self.folder_path, model_name)
-                )
+            if model_path:
+                shutil.copy(
+                    os.path.join(opt["checkpoint_path"], 'checkpoint.pth.tar'), 
+                    os.path.join(self.folder_path, model_name)
+                    )
 
         info = "{:2d}, {:6.2f} {} {:6.2f}\tB {:5.2f}({:5.2f})\tM {:5.2f}({:5.2f})\tR {:5.2f}({:5.2f})\tC {:5.2f}({:5.2f})".format(
                         self.continuous_failed_count, 100 * res['Sum'], res['Sum'] > self.best_res['Sum'], 100 * self.best_res['Sum'],
@@ -239,3 +248,9 @@ class k_PriorityQueue(object):
 
     def get(self):
         return self.queue.get()
+
+    def load_the_best_checkpoint(self, model):
+        assert self.qsize() == 1
+        node = self.get()
+        model.load_state_dict(torch.load(node.model_path)['state_dict'])
+        self.queue.put(node)

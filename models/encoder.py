@@ -439,7 +439,7 @@ class Encoder_Baseline(nn.Module):
             outputs.append(eo)
             hiddens.append(eh)
 
-        outputs = [outputs[-1]]
+        #outputs = [outputs[-1]]
 
         if self.return_gate_info:
             return outputs, hiddens, gate

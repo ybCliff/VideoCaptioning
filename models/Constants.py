@@ -33,6 +33,8 @@ mapping = {
 
     'beam': ('pred_beam', 'beam'),  #用于beam candidate selection
     'self_crit': ('gen_seq', 'gen_logprobs', 'rewards'), # reinforcement learning
+
+    'triplet': 'enc_embs', # self-supervised multimodal metric learning
 }
 
 
