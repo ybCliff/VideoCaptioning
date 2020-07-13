@@ -15,13 +15,15 @@ def get_preEncoder(opt, input_size):
     output_size = input_size.copy()
 
     if opt.get('use_preEncoder', False):
-        output_size = [opt.get('dim_iel', opt['dim_hidden'])] * len(input_size)
         pem = opt.get('preEncoder_modality', '')
         if pem:
             skip_info = [1] * len(opt['modality'])
             for char in pem:
-                skip_info[opt['modality'].index(char)] = 0
+                pos = opt['modality'].index(char)
+                skip_info[pos] = 0
+                output_size[pos] = opt['dim_hidden']
         else:
+            output_size = [opt.get('dim_iel', opt['dim_hidden'])] * len(input_size)
             skip_info = [0] * len(opt['modality'])
         preEncoder = Input_Embedding_Layer(
                 input_size=input_size,
