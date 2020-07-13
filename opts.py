@@ -53,7 +53,7 @@ def parse_opt():
     # Model settings
     parser.add_argument('--use_preEncoder', default=False, action='store_true')
     parser.add_argument('-pet', '--preEncoder_type', default='linear', type=str)
-    parser.add_argument('-pem', '--preEncoder_modality', default='m', type=str)
+    parser.add_argument('-pem', '--preEncoder_modality', default='', type=str)
 
     parser.add_argument('--encoder_type', type=str, default='GRU', help='IPE | Former')
     parser.add_argument('--encoder_dropout', type=float, default=0.5, help='strength of dropout in the encoder')

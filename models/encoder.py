@@ -257,7 +257,7 @@ class LEL(nn.Module):
 
 
 class Input_Embedding_Layer(nn.Module):
-    def __init__(self, input_size, hidden_size, name=[]):
+    def __init__(self, input_size, hidden_size, skip_info, name=[]):
         super(Input_Embedding_Layer, self).__init__()
         
         self.input_size = input_size
@@ -268,13 +268,16 @@ class Input_Embedding_Layer(nn.Module):
 
         self.encoder = []
         for i in range(len(input_size)):
-            tmp_module = nn.Sequential(
-                        *(
-                            nn.Linear(input_size[i], hidden_size),
+            if skip_info[i] == 0:
+                tmp_module = nn.Sequential(
+                            *(
+                                nn.Linear(input_size[i], hidden_size),
+                            )
                         )
-                    )
-            self.add_module("Encoder_%s" % name[i], tmp_module)
-            self.encoder.append(tmp_module)
+                self.add_module("Encoder_%s" % name[i], tmp_module)
+                self.encoder.append(tmp_module)
+            else:
+                self.encoder.append(None)
 
     def forward(self, **kwargs):
         input_feats = kwargs['input_feats']
@@ -283,10 +286,16 @@ class Input_Embedding_Layer(nn.Module):
         encoder_outputs = []
         for i in range(len(input_feats)):
             input_ = input_feats[i]
-            encoder_output = self.encoder[i](input_)
+            if self.encoder[i] is None:
+                encoder_output = input_
+            else:
+                encoder_output = self.encoder[i](input_)
             encoder_outputs.append(encoder_output)
 
         return encoder_outputs
+
+
+
 
 class Semantics_Enhanced_IEL(nn.Module):
     def __init__(self, input_size, semantics_size, nf, name, multiply=False):
