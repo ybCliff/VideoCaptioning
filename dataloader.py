@@ -73,10 +73,10 @@ class VideoDataset(Dataset):
         self.equally_sampling = opt.get('equally_sampling', False)
         self.total_frames_length = opt.get('total_frames_length', 60)
 
-        #self.data_i = [self.load_database(opt["feats_i"]), opt["dim_i"], opt.get("dummy_feats_i", False)]
-        #self.data_m = [self.load_database(opt["feats_m"]), opt["dim_m"], opt.get("dummy_feats_m", False)]
-        self.data_i = [[], opt["dim_i"], opt.get("dummy_feats_i", False)]
-        self.data_m = [[], opt["dim_m"], opt.get("dummy_feats_m", False)]
+        self.data_i = [self.load_database(opt["feats_i"]), opt["dim_i"], opt.get("dummy_feats_i", False)]
+        self.data_m = [self.load_database(opt["feats_m"]), opt["dim_m"], opt.get("dummy_feats_m", False)]
+        #self.data_i = [[], opt["dim_i"], opt.get("dummy_feats_i", False)]
+        #self.data_m = [[], opt["dim_m"], opt.get("dummy_feats_m", False)]
         self.data_a = [self.load_database(opt["feats_a"]), opt["dim_a"], opt.get("dummy_feats_a", False)]
         
 
@@ -276,12 +276,12 @@ class VideoDataset(Dataset):
         if bert_embs is not None:
             data['bert_embs'] = torch.FloatTensor(bert_embs)
 
-        # if self.decoder_type == 'LSTM' or self.decoder_type == 'ENSEMBLE':
-        #     tmp = np.zeros(self.num_category)
-        #     tmp[category] = 1
-        #     data['category'] = torch.FloatTensor(tmp)
-        # else:
-        data['category'] = torch.LongTensor([category])
+        if self.decoder_type == 'LSTM' or self.decoder_type == 'ENSEMBLE':
+            tmp = np.zeros(self.num_category)
+            tmp[category] = 1
+            data['category'] = torch.FloatTensor(tmp)
+        else:
+            data['category'] = torch.LongTensor([category])
         
         if frames_idx is not None:
             data['frames_idx'] = frames_idx
