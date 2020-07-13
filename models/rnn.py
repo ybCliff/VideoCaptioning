@@ -300,7 +300,7 @@ class Hierarchical_Encoder(nn.Module):
         rnn = nn.GRU
         self.no_global_context = opt.get('no_global_context', False)
         self.no_regional_context = opt.get('no_regional_context', False)
-
+        print('Global {}\tRegional {}'.format(not self.no_global_context, not self.no_regional_context))
         for i in range(len(input_size)):
             if i and not self.no_regional_context:
                 input_size = self.hidden_size[i-1] + self.input_size[i]
