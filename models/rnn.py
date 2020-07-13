@@ -298,10 +298,16 @@ class Hierarchical_Encoder(nn.Module):
         self.dropout = nn.Dropout(self.input_dropout_p)
 
         rnn = nn.GRU
+        self.no_global_context = opt.get('no_global_context', False)
+        self.no_regional_context = opt.get('no_regional_context', False)
 
         for i in range(len(input_size)):
-            tmp = self.hidden_size[i-1] + self.input_size[i] if i else self.input_size[i]
-            tmpRNN = rnn(tmp, self.hidden_size[i], batch_first=True, num_layers=1)
+            if i and not self.no_regional_context:
+                input_size = self.hidden_size[i-1] + self.input_size[i]
+            else:
+                input_size = self.input_size[i]
+
+            tmpRNN = rnn(input_size, self.hidden_size[i], batch_first=True, num_layers=1)
             self.add_module("rnn%d"%i, tmpRNN)
         self.rnn_list = []
         for name, module in self.named_children():
@@ -319,8 +325,13 @@ class Hierarchical_Encoder(nn.Module):
         encoder_hidden = None
         for i in range(len(input_feats)):
             if i:
-                input = torch.cat([rnn_output, input_feats[i]], dim=2)
-                rnn_output, encoder_hidden = self.rnn_list[i](self.dropout(input), encoder_hidden)
+                if self.no_global_context:
+                    encoder_hidden = None
+                if self.no_regional_context:
+                    input_ = input_feats[i]
+                else:
+                    input_ = torch.cat([rnn_output, input_feats[i]], dim=2)
+                rnn_output, encoder_hidden = self.rnn_list[i](self.dropout(input_), encoder_hidden)
             else:
                 rnn_output, encoder_hidden = self.rnn_list[i](self.dropout(input_feats[i]), encoder_hidden)
 

@@ -1,4 +1,5 @@
 
+from .joint_representation import Joint_Representaion_Learner
 from .seq2seq import Seq2Seq
 from .rnn import Hierarchical_Encoder#Encoder_Baseline, LSTM_Decoder
 from .bert import BertEncoder, BertDecoder, NVADecoder, DirectDecoder, APDecoder, SignalDecoder, Signal3Decoder, Signal2Decoder, NVDecoder, MSDecoder, ARDecoder_with_attribute_generation, BeamDecoder
@@ -6,9 +7,6 @@ from .bert_pytorch import BertDecoder as BD
 from .decoder import LSTM_Decoder, LSTM_GCC_Decoder, LSTM_Decoder_2stream, Top_Down_Decoder
 from .encoder import Encoder_Baseline, Progressive_Encoder, SVD_Encoder, Input_Embedding_Layer, Semantics_Enhanced_IEL, HighWay_IEL, Encoder_HighWay, LEL
 from .rnn import ENSEMBLE_Decoder 
-from .joint_representation import Joint_Representaion_Learner
-from .predictor import Auxiliary_Task_Predictor
-from .MultiModalEncoder import MultiModalEncoder
 import torch
 import torch.nn as nn
 

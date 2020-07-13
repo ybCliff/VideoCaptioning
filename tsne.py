@@ -44,9 +44,14 @@ def plot_several_category(data, category, specific=[3, 4, 9, 16, 17]):
         plt.scatter(x[idx], y[idx], c=color[j], label=label[j])
 
     cal_dis(x, y, category)
-    plt.legend()
-    plt.subplots_adjust(left=0.06, right=0.99, bottom=0.04, top=0.99)
-    plt.savefig('./dummpy.png')
+    #plt.legend(fontsize=18)
+    plt.xticks([])
+    plt.yticks([])
+    #plt.xlabel('(a) image modality', fontsize=20)
+    plt.xlabel('(b) audio modality', fontsize=20)
+    plt.subplots_adjust(left=0.02, right=0.99, bottom=0.07, top=0.99)
+    #plt.savefig('./I.png')
+    plt.savefig('./A.png')
     plt.show()
 
 
@@ -62,6 +67,13 @@ def main(opt):
     model.load_state_dict(checkpoint['state_dict'])
     model.to(device)
 
+    for key in ['info_corpus', 'reference', 'feats_i', 'feats_m', 'feats_a']:
+        if isinstance(option[key], list):
+            for i in range(len(option[key])):
+                option[key][i] = option[key][i].replace('/home/yangbang/VideoCaptioning', '/Users/yangbang/Desktop/VC_data')
+        else:
+            option[key] = option[key].replace('/home/yangbang/VideoCaptioning', '/Users/yangbang/Desktop/VC_data')
+
     loader = get_loader(option, mode=opt.em, print_info=False, specific=opt.specific)
     vocab = loader.dataset.get_vocab()
 
@@ -76,10 +88,11 @@ def main(opt):
         for data in tqdm(loader, ncols=150, leave=False):
             with torch.no_grad():
                 results, cate, _, _ = get_forword_results(option, model, data, device=device, only_data=True)
-                encoder_outputs.append(results['enc_output'])
+                encoder_outputs.append(results['enc_output'][0])
                 category.append(cate)
         encoder_outputs = torch.cat(encoder_outputs, dim=0).cpu().numpy()
         category = torch.cat(category, dim=0).view(-1).cpu().numpy()
+        print(encoder_outputs.shape, category.shape)
 
         encoder_outputs = encoder_outputs.mean(1)
         pca = manifold.TSNE(n_components=opt.pca)
@@ -90,9 +103,11 @@ def main(opt):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='translate.py')
     parser.add_argument('-model_path', type=str,
-                        default="/home/yangbang/VideoCaptioning/0105save/MSRVTT/GRU_LSTM/ADD0_WA0_EBN1_SS1_WC0_Mi-Im_type2/")
+                        default="./A")
 
-    parser.add_argument('-model_name', default='0028_175313_179067_182774_182189_180426.pth.tar', type=str)
+    parser.add_argument('-model_name', default='0029_141016_144452_145352_146429_143949.pth.tar', type=str)
+    #0035_172635_175599_178757_180008_178418.pth.tar
+    #0029_141016_144452_145352_146429_143949.pth.tar
     parser.add_argument('-beam_size', type=int, default=5,
                         help='Beam size')
     parser.add_argument('-beam_alpha', type=float, default=1.0)

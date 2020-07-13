@@ -14,7 +14,6 @@ from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.rouge.rouge import Rouge
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.meteor.meteor import Meteor
-from pycocoevalcap.spice.spice import Spice 
 from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
 # Define a context manager to suppress stdout and stderr.
 

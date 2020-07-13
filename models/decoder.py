@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import copy
-from fastNLP.modules import VarLSTM
 
 class Embedding_Layer(nn.Module):
     def __init__(self, vocab_size, dim_word=300, dim_hidden=512, embedding_weights=None, train_embedding=False):

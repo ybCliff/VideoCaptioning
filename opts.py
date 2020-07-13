@@ -19,6 +19,8 @@ def parse_opt():
         help='After what epoch do we start finetuning the CNN? \
                         (-1 = disable; never finetune, 0 = finetune from start)'
     )
+    parser.add_argument('-ngc', '--no_global_context', default=False, action='store_true')
+    parser.add_argument('-ngc', '--no_regional_context', default=False, action='store_true')
 
     # Bert
     parser.add_argument('--dim_hidden', type=int, default=512, help='size of the rnn hidden layer')
