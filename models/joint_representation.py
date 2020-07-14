@@ -107,7 +107,9 @@ class Joint_Representaion_Learner(nn.Module):
                 self.add_module("bn%d"%(i), tmp_module)
 
     def forward(self, encoder_outputs, encoder_hiddens):
-        if self.decoder_type != 'ENSEMBLE' and self.encoder_type == 'GRU' and not self.opt.get('two_stream', False) or self.encoder_type == 'IEL':
+        if (self.decoder_type != 'ENSEMBLE' and self.encoder_type == 'GRU' and not self.opt.get('two_stream', False)) \
+        or self.encoder_type == 'IEL' \
+        or (self.encoder_type == 'IPE' and self.opt.get('MSLSTM', False)):
             if isinstance(encoder_hiddens[0], tuple):
                 hx = []
                 cx = []

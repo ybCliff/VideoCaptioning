@@ -126,6 +126,7 @@ def print_information(opt, model, model_name):
         sum(p.numel() for p in model.parameters()),
         sum(p.numel() for p in model.parameters() if p.requires_grad),
     ))
+    print(sum(p.numel() for n, p in model.named_parameters() if 'encoder' in n.lower()))
     print('use trigger: %d' % opt.get('use_trigger', 0))
     print('trigger level: %g' % opt.get('trigger_level', 0.25))
     print('dataloader random type: %s' % opt.get('random_type', 'segment_random'))

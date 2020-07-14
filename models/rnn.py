@@ -132,6 +132,21 @@ class HighWay(nn.Module):
         gate = torch.sigmoid(self.w2(x))
         return gate * x + (1 - gate) * y
 
+class MLP(nn.Module):
+    def __init__(self, input_size, output_size, with_audio=False):
+        super(MLP, self).__init__()
+        mul = 5 if with_audio else 4
+        self.net = nn.Sequential(
+                        *(
+                            nn.Linear(input_size, int(mul*output_size)),
+                            nn.ReLU(),
+                            nn.Dropout(0.5),
+                            nn.Linear(int(mul*output_size), output_size)
+                        )
+                    )
+    def forward(self, input_feats):
+        encoder_outputs = self.net(torch.cat(input_feats, dim=2))
+        return encoder_outputs, encoder_outputs.mean(1)
 
 class Encoder_Baseline(nn.Module):
     def __init__(self, input_size=[1536, 2048], output_size=[512, 512], name=[], encoder_type='gru', together=False):
@@ -149,7 +164,7 @@ class Encoder_Baseline(nn.Module):
             tmp_encoder = nn.Linear
 
         if encoder_type == 'mslstm':
-            num_layers = 2
+            num_layers = 1
 
         if len(name) == 0:
             name = [str(i) for i in range(len(self.input_size))]
@@ -227,10 +242,12 @@ class Encoder_Baseline(nn.Module):
                         #eo = F.tanh(self.encoder[i](self.dropout(input_feats[i])))
                         eo = self.encoder[i](self.dropout(input_feats[i]))
                         eh = eo.mean(1)
+
                 outputs.append(eo)
                 hiddens.append(eh)
 
-        return outputs, hiddens
+        #return outputs, hiddens
+        return torch.stack(outputs, dim=0).mean(0), hiddens
 
 
 '''
@@ -1524,7 +1541,7 @@ class Encoder_Baseline(nn.Module):
 
         return outputs, hiddens
 '''
-
+'''
 class Encoder_Baseline(nn.Module):
     def __init__(self, input_size=[1536, 2048], output_size=[512, 512], name=[], auxiliary_pos=[[], [0]], skip_info=[1, 0], return_gate_info=False, use_LSTM=False):
         super(Encoder_Baseline, self).__init__()
@@ -1590,7 +1607,7 @@ class Encoder_Baseline(nn.Module):
             return outputs, hiddens, gate
         else:
             return outputs, hiddens
-
+'''
 class GRU_with_GCC(torch.nn.Module):
     def extra_repr(self):
         s = '{input_size}, {feats_size}, {hidden_size}'

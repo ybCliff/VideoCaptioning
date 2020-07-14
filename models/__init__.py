@@ -47,7 +47,15 @@ def get_preEncoder(opt, input_size):
 def get_encoder(opt, input_size, mapping, modality):
     hidden_size = [opt['dim_hidden']] * len(modality)
     if opt['encoder_type'] == 'IPE':
-        encoder = Hierarchical_Encoder(input_size = input_size, hidden_size = hidden_size, opt = opt)
+        if opt.get('MLP', False):
+            from .rnn import MLP
+            encoder = MLP(sum(input_size), opt['dim_hidden'], 'a' in modality)
+        elif opt.get('MSLSTM', False):
+            from .rnn import Encoder_Baseline
+            encoder = Encoder_Baseline(input_size=input_size, output_size=hidden_size, name=modality.upper(), encoder_type='mslstm')
+        else:
+            encoder = Hierarchical_Encoder(input_size = input_size, hidden_size = hidden_size, opt = opt)
+
     elif opt['encoder_type'] == 'IEL':
         encoder = HighWay_IEL(
                 input_size=input_size, 

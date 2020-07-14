@@ -33,11 +33,16 @@ for item in content:
 
 def loop_category(option, opt, model, device):
     loop_logger = CsvLogger(filepath='./category_results', filename='ARVC_%s%s.csv' % (option['dataset'], '' if option.get('method', None) != 'ag' else '_ag'), 
-                fieldsnames=['novel', 'unique', 'usage', 'ave_length', 'gram4'])
+                #fieldsnames=['novel', 'unique', 'usage', 'ave_length', 'gram4'],
+                fieldsnames=['Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum', 'loss'],
+                )
+
     for i in range(20):
         loader = get_loader(option, mode=opt.em, specific=i)
         vocab = loader.dataset.get_vocab()
-        metric = run_eval(option, model, None, loader, vocab, device, print_sent=opt.print_sent, no_score=True, analyze=True)
+        #metric = run_eval(option, model, None, loader, vocab, device, print_sent=opt.print_sent, no_score=True, analyze=True)
+        metric = run_eval(option, model, None, loader, vocab, device, print_sent=opt.print_sent, no_score=False, analyze=False)
+
         loop_logger.write(metric)
 
 
@@ -120,14 +125,22 @@ def main():
                 "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed920/",
                 "/home/yangbang/VideoCaptioning/0219save/VATEX/IEL_ARFormer/EBN1_SS1_NDL1_WC0_M/",
                 "/home/yangbang/VideoCaptioning/0219save/MSRVTT/IEL_ARFormer/EBN1_SS0_NDL1_WC20_MI_seed1314_ag/",
+                "/home/yangbang/VideoCaptioning/620save/MSRVTT/IPE_LSTM/ADD0_WA0_EBN1_SS1_WC20_A_icpr/",
+                "/home/yangbang/VideoCaptioning/620save/MSRVTT/IPE_LSTM/ADD0_WA0_EBN1_SS1_WC20_I_icpr/",
+                "/home/yangbang/VideoCaptioning/620save/MSRVTT/IPE_LSTM/ADD0_WA0_EBN1_SS1_WC20_A-I_icpr/",
             ]
         )
+    
     parser.add_argument('-model_name', nargs='+', type=str, default=[
                 '0044_240095_254102_253703_251149_247202.pth.tar',
                 #'0028_177617_180524_183734_183213_182417.pth.tar',
                 "0011_176183_177176_180332_180729_178864.pth.tar",
                 '0099_160093_057474.pth.tar',
                 "0025_179448_180500_184018_184037_182508.pth.tar",
+
+                "0029_141016_144452_145352_146429_143949.pth.tar",
+                "0035_172635_175599_178757_180008_178418.pth.tar",
+                "0012_177608_184238_186604_186425_184686.pth.tar",
             ]
         )
     parser.add_argument('-i', '--index', default=0, type=int)

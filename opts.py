@@ -21,6 +21,8 @@ def parse_opt():
     )
     parser.add_argument('-ngc', '--no_global_context', default=False, action='store_true')
     parser.add_argument('-nrc', '--no_regional_context', default=False, action='store_true')
+    parser.add_argument('-MLP', '--MLP', default=False, action='store_true')
+    parser.add_argument('-MSLSTM', '--MSLSTM', default=False, action='store_true')
 
     # Bert
     parser.add_argument('--dim_hidden', type=int, default=512, help='size of the rnn hidden layer')
