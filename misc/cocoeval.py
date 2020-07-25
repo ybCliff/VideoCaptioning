@@ -7,14 +7,7 @@ class COCOScorer is taken from https://github.com/yaoli/arctic-capgen-vid
 
 import json
 import os
-import sys
-sys.path.append('coco-caption')
-
-from pycocoevalcap.bleu.bleu import Bleu
-from pycocoevalcap.rouge.rouge import Rouge
-from pycocoevalcap.cider.cider import Cider
-from pycocoevalcap.meteor.meteor import Meteor
-from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from coco import Bleu, Rouge, Cider, Meteor, PTBTokenizer
 # Define a context manager to suppress stdout and stderr.
 
 

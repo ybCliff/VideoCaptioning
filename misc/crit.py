@@ -346,42 +346,18 @@ class Criterion(object):
         return num_sample, i_loss
 
     def check_and_cal_word_acc(self, pred, gt):
-        assert isinstance(pred, list)
-        
-        if isinstance(gt, list):
-            assert len(pred) == len(gt)
-            for i in range(len(pred)):
-                ind = gt[i].ne(Constants.PAD)
-                if i == 0:
-                    if self.opt['method'] == 'signal3':
-                        ind = ind & gt[i].ne(self.opt['visual_tag'])
-                        #ind = ind & gt[i].ne(Constants.MASK)
-                    elif self.opt['method'] == 'ag':
-                        ind = ind & gt[i].ne(Constants.BOS)
-                    else:
-                        ind = ind & gt[i].ne(Constants.MASK)
-                elif i == 1 and self.opt['method'] == 'signal3':
-                    ind = ind & gt[i].ne(self.opt['nonvisual_tag'])
-                    #ind = ind & gt[i].ne(Constants.MASK)
-                
-                predict_res = pred[i].max(-1)[1][ind]
-                target_res = gt[i][ind]
+        if not isinstance(pred, list):
+            pred = [pred]
 
-                self.word_acc_recorder[i].update(
-                            (predict_res==target_res).sum().item(), 
-                            predict_res.size(0), 
-                            multiply=False
-                    )
-        else:
-            for i in range(len(pred)):
-                ind = gt.ne(Constants.PAD)
-                predict_res = pred[i].max(-1)[1][ind]
-                target_res = gt[ind]
-                self.word_acc_recorder[i].update(
-                            (predict_res==target_res).sum().item(), 
-                            predict_res.size(0), 
-                            multiply=False
-                    )
+        for i in range(len(pred)):
+            ind = gt.ne(Constants.PAD)
+            predict_res = pred[i].max(-1)[1][ind]
+            target_res = gt[ind]
+            self.word_acc_recorder[i].update(
+                        (predict_res==target_res).sum().item(),
+                        predict_res.size(0),
+                        multiply=False
+                )
 
     def cal_classify_acc(self, pred, gt):
         for i, (p, g) in enumerate(zip(pred, gt)):
@@ -415,10 +391,7 @@ class Criterion(object):
                 # calculate i-th loss
                 if isinstance(self.crit[i], DistillationLoss):
                     num_sample = gt.size(0)
-                    if self.opt['na']:
-                        i_loss = self.crit[i](pred, gt, results['pure_target'])
-                    else:
-                        i_loss = self.crit[i](pred, gt, results[Constants.mapping['lang'][1]])
+                    i_loss = self.crit[i](pred, gt, results[Constants.mapping['lang'][1]])
                 elif isinstance(self.crit[i], SelfCritCriterion):
                     num_sample = pred.size(0)
                     i_loss = self.crit[i](results)
@@ -489,26 +462,7 @@ def get_criterion(opt):
         assert item.lower() in crit_mapping
         crit.append(crit_mapping[item.lower()])
 
-    if opt['na']:
-        if opt['method'] == 'mp':
-            calculate_word_acc = 1
-        elif opt['method'] == 'direct':
-            calculate_word_acc = 3
-        elif opt['method'] == 'signal':
-            calculate_word_acc = 3
-        elif opt['method'] == 'signal3':
-            calculate_word_acc = 3
-        elif opt['method'] == 'signal2':
-            calculate_word_acc = 2
-        elif opt['method'] == 'nv':
-            calculate_word_acc = 2
-        elif opt['method'] == 'ms':
-            calculate_word_acc = 2
-    else:
-        if opt['method'] == 'ag':
-            calculate_word_acc = 2 if (not opt.get('use_beam_decoder', False) and not opt.get('use_rl', False)) else 0
-        else:
-            calculate_word_acc = 0
+    calculate_word_acc = 1
 
     return Criterion(
             crit=crit,

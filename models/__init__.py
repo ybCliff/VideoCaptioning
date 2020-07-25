@@ -5,42 +5,62 @@ from .fusion import Joint_Representaion_Learner
 from .decoder import LSTM_Decoder, Top_Down_Decoder
 from .seq2seq import Seq2Seq
 
-def get_preEncoder(opt, input_size):
+
+def get_preEncoder(opt):
+    '''
+        preEncoder is to embed features into low-dimention space
+        e.g., 4096-D C3D features can be mapped into 512-D embeddings 
+        by setting use_preEncoder=True and preEncoder_modality='m'
+    '''
+    modality = opt['modality'].lower()
+    input_size = []
+    mapping = {
+        'i': opt['dim_i'],  # image
+        'm': opt['dim_m'],  # motion
+        'a': opt['dim_a'],  # audio
+    }
+    for char in modality:
+        assert char in mapping.keys()
+        input_size.append(mapping[char])
+
     preEncoder = None
     output_size = input_size.copy()
 
     if opt.get('use_preEncoder', False):
         pem = opt.get('preEncoder_modality', '')
         if pem:
-            skip_info = [1] * len(opt['modality'])
+            # only the specific modalities will be processed
+            skip_info = [1] * len(input_size)
             for char in pem:
-                pos = opt['modality'].index(char)
+                pos = modality.index(char)
                 skip_info[pos] = 0
                 output_size[pos] = opt['dim_hidden']
         else:
-            output_size = [opt.get('dim_iel', opt['dim_hidden'])] * len(input_size)
-            skip_info = [0] * len(opt['modality'])
+            # all features will be processed
+            skip_info = [0] * len(input_size)
+            output_size = [opt['dim_hidden']] * len(input_size)
+            
         preEncoder = Input_Embedding_Layer(
                 input_size=input_size,
-                hidden_size=opt.get('dim_iel', opt['dim_hidden']), 
+                hidden_size=opt['dim_hidden'], 
                 skip_info=skip_info,
-                name=opt['modality'].upper()
+                name=modality.upper()
             )
 
     return preEncoder, output_size
 
-def get_encoder(opt, input_size, mapping, modality):
-    hidden_size = [opt['dim_hidden']] * len(modality)
-    if opt['encoder_type'] == 'IPE':
-        if opt.get('MLP', False):
-            
-            encoder = MLP(sum(input_size), opt['dim_hidden'], 'a' in modality)
-        elif opt.get('MSLSTM', False):
-            encoder = Encoder_Baseline(input_size=input_size, output_size=hidden_size, name=modality.upper(), encoder_type='mslstm')
-        else:
-            encoder = Visual_Oriented_Encoder(input_size = input_size, hidden_size = hidden_size, opt = opt)
 
+def get_encoder(opt, input_size):
+    modality = opt['modality'].lower()
+    hidden_size = [opt['dim_hidden']] * len(input_size)
+    if opt['encoder_type'] == 'VOE':
+        encoder = Visual_Oriented_Encoder(input_size=input_size, hidden_size=hidden_size, opt = opt)
+    elif opt['encoder_type'] == 'MLP':
+        encoder = MLP(sum(input_size), opt['dim_hidden'], 'a' in modality)
+    elif opt['encoder_type'] == 'MSLSTM':
+        encoder = Encoder_Baseline(input_size=input_size, output_size=hidden_size, name=modality.upper(), encoder_type='mslstm')
     return encoder
+
 
 def get_joint_representation_learner(opt):
     modality = opt['modality'].lower()
@@ -60,43 +80,25 @@ def get_joint_representation_learner(opt):
         feats_size = [opt['dim_hidden']] * len(modality)
     else:
         feats_size = [opt['dim_hidden']]
-    
-    return Joint_Representaion_Learner(feats_size, opt)
+    return Joint_Representaion_Learner(feats_size, fusion_type=opt['fusion_type'], with_bn=not opt['no_bn'])
+
 
 def get_decoder(opt):
     if opt['decoder_type'] == 'LSTM':
-        if opt.get('top_down', False):
-            decoder = Top_Down_Decoder(opt)
-        else:
-            decoder = LSTM_Decoder(opt)
+        decoder = LSTM_Decoder(opt)
+    elif opt['decoder_type'] == 'TopDown':
+        decoder = Top_Down_Decoder(opt)
     return decoder
 
 
-
 def get_model(opt):
-    modality = opt['modality'].lower()
-    input_size = []
-    mapping = {
-        'i': opt['dim_i'],
-        'm': opt['dim_m'],
-        'a': opt['dim_a']
-    }
-    for char in modality:
-        assert char in mapping.keys()
-        input_size.append(mapping[char])
-
-    preEncoder, input_size = get_preEncoder(opt, input_size)
-    encoder = get_encoder(opt, input_size, mapping, modality)
-
-    if opt.get('intra_triplet', False) or opt['encoder_type'] == 'MME':
-        joint_representation_learner = None
-    else:
-        joint_representation_learner = get_joint_representation_learner(opt)
+    preEncoder, input_size = get_preEncoder(opt)
+    encoder = get_encoder(opt, input_size)
+    joint_representation_learner = get_joint_representation_learner(opt)
 
     if len(opt['crit']) == 1:
         # only the main task: language generation
-        if not opt.get('use_beam_decoder', False) and not opt.get('use_rl', False):
-            assert opt['crit'][0] == 'lang'
+        assert opt['crit'][0] == 'lang'
 
 
     have_auxiliary_tasks = sum([(1 if item not in ['lang', 'tag'] else 0) for item in opt['crit']])
@@ -112,7 +114,6 @@ def get_model(opt):
         auxiliary_task_predictor = auxiliary_task_predictor,
         decoder = decoder,
         tgt_word_prj = tgt_word_prj,
-        beam_decoder = beam_decoder,
         opt = opt
         )
     return model

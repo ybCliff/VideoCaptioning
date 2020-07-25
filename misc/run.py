@@ -1,28 +1,21 @@
-import sys
-import os, shutil
+import os
+import shutil
 import torch
-import torch.nn as nn
-sys.path.append("..")
-sys.path.append(".")
 from torch.nn.utils import clip_grad_value_
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import numpy as np
-import glob
-from pandas.io.json import json_normalize
 import json
-import pandas as pd
-from misc.cocoeval import suppress_stdout_stderr, COCOScorer, COCOBLEUScorer
+from misc.cocoeval import suppress_stdout_stderr, COCOScorer
 import misc.utils as utils
 from dataloader import VideoDataset, BD_Dataset
 from collections import OrderedDict
 
-import math, random
+import math
 
 from models.Translator import Translator, Translator_ensemble
 import models.Constants as Constants
 
-from models import get_model
 from .optim import get_optimizer
 from .crit import get_criterion
 from .logger import CsvLogger, k_PriorityQueue
@@ -30,34 +23,17 @@ from .logger import CsvLogger, k_PriorityQueue
 from collections import defaultdict
 import pickle
 import time
-import copy
+
+
 def save_checkpoint(state, is_best, filepath='./', filename='checkpoint.pth.tar', best_model_name='model_best.pth.tar'):
     if not os.path.exists(filepath):
         os.makedirs(filepath)
-    save_path = os.path.join(filepath, filename) 
+    save_path = os.path.join(filepath, filename)
     torch.save(state, save_path)
     if is_best:
         best_path = os.path.join(filepath, best_model_name)
         shutil.copyfile(save_path, best_path)
 
-
-def get_dict_mapping(opt, teacher_opt):
-    if teacher_opt is None:
-        return {}
-
-    info = json.load(open(opt["info_json"]))
-    vocab = info['ix_to_word']
-
-    teacher_info = json.load(open(teacher_opt["info_json"]))
-    teacher_vocab = teacher_info['ix_to_word']
-    teacher_w2ix = teacher_info['word_to_ix']
-    if vocab == teacher_vocab:
-        return {}
-
-    dict_mapping = {}
-    for k, v in vocab.items():
-        dict_mapping[int(k)] = int(teacher_w2ix[v])
-    return dict_mapping
 
 def enlarge(info, beam_size):
     bsz, *rest_shape = info.shape
@@ -65,44 +41,22 @@ def enlarge(info, beam_size):
         return info.unsqueeze(1).repeat(1, beam_size, 1, 1).view(bsz * beam_size, *rest_shape)
     return info.unsqueeze(1).repeat(1, beam_size, 1).view(bsz * beam_size, *rest_shape)
 
+
 def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
     feats_i, feats_m, feats_a, feats_s, feats_t, category, labels, length_target, attribute = map(
-            lambda x: x.to(device), 
-            [data['feats_i'], data['feats_m'], data['feats_a'], data['feats_s'], data['feats_t'],
-            data['category'], data['labels'], data['length_target'], data['attribute']]
-        )
+        lambda x: x.to(device),
+        [data['feats_i'], data['feats_m'], data['feats_a'], data['feats_s'], data['feats_t'],
+         data['category'], data['labels'], data['length_target'], data['attribute']]
+    )
     feats_t = feats_t.mean(1)
-
-    if opt['decoder_type'] in ['ARFormer', 'NARFormer']:
-        if opt['na']:
-            if opt['method'] == 'mp':
-                tokens = data['tokens'].to(device)
-            elif opt['method'] == 'nva':
-                dec_source_1 = data['tokens_1'].to(device) # [batch_size, num_demand, max_len]
-                tokens = [dec_source_1.view(-1, dec_source_1.shape[-1]), data['tokens'].to(device)]
-            elif opt['method'] == 'direct' or opt['method'] == 'ap' or opt['method'] == 'signal' or opt['method'] == 'signal2':
-                tokens = [data['tokens_1'].to(device), data['tokens'].to(device)]
-            elif opt['method'] == 'signal3':
-                tokens = [data['tokens_1'].to(device), data['tokens'].to(device), data['taggings'].to(device)]
-            elif opt['method'] in ['nv', 'ms']:
-                tokens = [data['tokens_1'].to(device), data['tokens'].to(device)]
-        else:
-            if opt['method'] == 'ag':
-                tokens = [data['tokens_1'].to(device), data['tokens'].to(device)]
-            else:
-                tokens = data['tokens'].to(device)
-    else:
-        tokens = labels
-        #pass
-        #
 
     obj = None
     if data.get('obj', None) is not None:
         obj = data['obj'].to(device)
-    #taggings = None
-    #if opt.get('use_tag', False):
+    # taggings = None
+    # if opt.get('use_tag', False):
     taggings = data.get('taggings', None)
-    if taggings is not None: 
+    if taggings is not None:
         taggings = taggings.to(device)
 
     bert_embs = data.get('bert_embs', None)
@@ -114,7 +68,7 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
         'm': feats_m,
         'a': feats_a
     }
-    
+
     modality = opt['modality'].lower()
 
     feats = []
@@ -123,12 +77,12 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
         feats.append(mapping[char])
 
     if only_data:
-        #print(labels)
+        # print(labels)
         return model.encode(feats=feats, semantics=feats_s), category, labels, feats_t
 
     results = model(
         feats=feats,
-        tgt_tokens=tokens, 
+        tgt_tokens=labels,
         category=category,
         opt=opt,
         obj=obj,
@@ -137,195 +91,76 @@ def get_forword_results(opt, model, data, device, only_data=False, vocab=None):
         vocab=vocab,
         tags=feats_t,
         bert_embs=bert_embs
-        )
+    )
 
-    if opt['na']:
-        if opt['method'] == 'mp':
-            results[Constants.mapping['lang'][1]] = labels
-        elif opt['method'] == 'nva':
-            dec_target_1 = data['labels_1'].to(device) # [batch_size, num_demand, max_len]
-            results[Constants.mapping['lang'][1]] = [dec_target_1.view(-1, dec_target_1.shape[-1]), labels]
-        elif opt['method'] == 'ap' or opt['method'] == 'signal2':
-            dec_target_1 = data['labels_1'].to(device) # [batch_size, num_demand, max_len]
-            results[Constants.mapping['lang'][1]] = [dec_target_1, labels]
-        elif opt['method'] == 'direct' or opt['method'] == 'signal':
-            results[Constants.mapping['lang'][1]] = [data['labels_1'].to(device), labels, labels]
-        elif opt['method'] == 'signal3':
-            results[Constants.mapping['lang'][1]] = [
-            data['labels_1'].to(device), 
-            labels, 
-            data['pure_target'].to(device)
-            #enlarge(data['pure_target'].to(device), 2)
-            ]
-        elif opt['method'] == 'nv':
-            results[Constants.mapping['lang'][1]] = [
-            data['labels_1'].to(device), 
-            labels
-            ]
-        elif opt['method'] == 'ms':
-            results[Constants.mapping['lang'][1]] = [
-            enlarge(data['labels_1'].to(device), opt['multiscale']), 
-            labels
-            ]
-    else:
-        if opt['method'] == 'ag':
-            results[Constants.mapping['lang'][1]] = [
-            data['labels_1'].to(device)[:, 1:], 
-            labels[:, 1:]
-            ]
-        else:
-            results[Constants.mapping['lang'][1]] = labels[:, 1:]
-
-    results['obj'] = obj
+    results[Constants.mapping['lang'][1]] = labels[:, 1:]
     results['taggings'] = taggings[:, 1:] if taggings is not None else None
     results[Constants.mapping['length'][1]] = length_target
-    results[Constants.mapping['bow'][1]] = data['pure_target'].to(device) if opt['method'] != 'nv' else data['labels_1'].to(device)
     results[Constants.mapping['attr'][1]] = attribute
-
-    results['pure_target'] = data['pure_target'].to(device)
     return results
 
 
-def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weight = 1):
+def get_self_critical_reward(opt, gen_result, greedy_res, gts, vocab, cider_weight=1):
     from cider.pyciderevalcap.ciderD.ciderD import CiderD
     scorer = CiderD(df=opt['rl_cached_file'])
     # ground_truth is the 5 ground truth captions for a mini-batch, which can be aquired from the preprocess_gd function
-    #[[c1, c2, c3, c4, c5], [c1, c2, c3, c4, c5],........]. Note that c is a caption placed in a list
+    # [[c1, c2, c3, c4, c5], [c1, c2, c3, c4, c5],........]. Note that c is a caption placed in a list
     # len(ground_truth) = batch_size. Already duplicated the ground truth captions in dataloader
     tmp = gen_result.clone()
-    batch_size = gen_result.size(0)  
+    batch_size = gen_result.size(0)
     assert len(gts.keys()) == batch_size // opt.get('seq_per_video', 1)
 
     res = OrderedDict()
-    gen_result = gen_result.data.cpu().numpy()   # (batch_size, max_len)
-    greedy_res = greedy_res.data.cpu().numpy()   # (batch_size, max_len)
-    
+    gen_result = gen_result.data.cpu().numpy()  # (batch_size, max_len)
+    greedy_res = greedy_res.data.cpu().numpy()  # (batch_size, max_len)
+
     pt = []
     for i in range(batch_size):
         # change to string for evaluation purpose 
         res[i] = [to_sentence(gen_result[i], add_eos=opt['use_eos'])]
         pt.append(res[i][0])
-        
+
     for i in range(batch_size):
         # change to string for evaluation purpose
         res[batch_size + i] = [to_sentence(greedy_res[i], add_eos=opt['use_eos'])]
-        #tqdm.write(to_sentence(greedy_res[i], vocab) + '\t' + pt[i])
+        # tqdm.write(to_sentence(greedy_res[i], vocab) + '\t' + pt[i])
 
     # 2 is because one is for the sampling and one for greedy decoding
-    res_ = [{'image_id':i, 'caption': res[i]} for i in range(2 * batch_size)] 
+    res_ = [{'image_id': i, 'caption': res[i]} for i in range(2 * batch_size)]
     # the number of ground-truth captions for each image stay the same as above. Duplicate for the sampling and greedy
     gts = {i: gts[(i % batch_size) // opt.get('seq_per_video', 1)] for i in range(2 * batch_size)}
     _, cider_scores = scorer.compute_score(gts, res_)
 
-    #print('--')
-    #print(res[0], len(res[0][0].split(' ')))
-    #print(res[batch_size], len(res[batch_size][0].split(' ')))
+    # print('--')
+    # print(res[0], len(res[0][0].split(' ')))
+    # print(res[batch_size], len(res[batch_size][0].split(' ')))
     # print(gts[0])
-    #print(tmp[0].gt(0).sum(), tmp[0])
-    #assert tmp[0].gt(0).sum() == len(res[0][0].split(' '))
+    # print(tmp[0].gt(0).sum(), tmp[0])
+    # assert tmp[0].gt(0).sum() == len(res[0][0].split(' '))
 
     scores = cider_weight * cider_scores
     scores = scores[:batch_size] - scores[batch_size:]
-    rewards = np.repeat(scores[:, np.newaxis], gen_result.shape[1], 1)    # gen_result.shape[1] = max_len
+    rewards = np.repeat(scores[:, np.newaxis], gen_result.shape[1], 1)  # gen_result.shape[1] = max_len
     rewards = torch.from_numpy(rewards).float()
 
     return rewards
 
+
 global_model = None
 
-def get_forward_results_rl(opt, model, data, device, vocab, references):
-    """
-        This function is for reinforcement learning.
-        The collected results will be returned to the criterion.
-    """
-    # (1) prepare features
-    feats_i, feats_m, feats_a, category = map(
-            lambda x: enlarge(x.to(device), opt.get('seq_per_video', 1)), 
-            [data['feats_i'], data['feats_m'], data['feats_a'], data['category']]
-        )
-    mapping = {
-        'i': feats_i,
-        'm': feats_m,
-        'a': feats_a
-    }
-    modality = opt['modality'].lower()
-    feats = []
-    for char in modality:
-        assert char in ['i', 'm', 'a']
-        feats.append(mapping[char])
-
-    # (1) prepare ground-truth sentences
-    vids = data['video_ids']
-    gts = OrderedDict()
-    for i, vid in enumerate(vids):
-        #gts[i] = [item['caption'] for item in references[vid]]
-        gts[i] = [to_sentence(item[1:], add_eos=opt['use_eos']) for item in references[vid]]
-
-    # (2) Get greedy sequences, sampled sequences & logprobs
-    model.eval()
-    with torch.no_grad():
-        greedy_res, _, _ = model(feats=feats, category=category, sample_max=True, sample_rl=False, opt=opt)
-        # tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
-    model.train()
-    # global global_model
-    # if global_model is None:
-    #     global_model = copy.deepcopy(model)
-    seq_gen, seqLogprobs, probs = model(feats=feats, category=category, sample_max=False, sample_rl=True, opt=opt)#, ori_model=global_model)
-    #print(probs[0][:3])
-
-    #print(gts[0])
-    #tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab))
-    tqdm.write(to_sentence(seq_gen[0].cpu().numpy(), vocab))
-    #tqdm.write(to_sentence(seq_gen[0].cpu().numpy(), vocab) + '\t' + to_sentence(seq_gen[1].cpu().numpy(), vocab))
-    #tqdm.write(to_sentence(greedy_res[0].cpu().numpy(), vocab) + '\t' + to_sentence(greedy_res[1].cpu().numpy(), vocab))
-
-
-    # (3) Calculate the rewards
-    rewards = get_self_critical_reward(opt, seq_gen, greedy_res, gts, vocab, cider_weight = 1)
-
-    return {k: v for k, v in zip(Constants.mapping['self_crit'], [seq_gen, seqLogprobs, rewards.to(device), probs.detach() if probs is not None else None])}
-
-
-def get_forword_results_bd(opt, model, data, device, only_data=False, vocab=None):
-    bd_load_feats = opt.get('bd_load_feats', False)
-    if bd_load_feats:
-        tgt_tokens, labels, category, feats_i, feats_m, feats_a = map(lambda x: x.to(device), data)
-        mapping = {
-            'i': feats_i,
-            'm': feats_m,
-            'a': feats_a
-        }
-        
-        modality = opt['modality'].lower()
-
-        feats = []
-        for char in modality:
-            assert char in ['i', 'm', 'a']
-            feats.append(mapping[char])
-    else:
-        tgt_tokens, labels, category = map(lambda x: x.to(device), data)
-        feats=None
-
-    results = model(
-        feats=feats,
-        tgt_tokens=tgt_tokens, 
-        category=category,
-        opt=opt
-        )
-    results[Constants.mapping['beam'][1]] = labels.view(-1)
-    return results
 
 def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1, bd=False):
     func = BD_Dataset if bd else VideoDataset
     dataset = func(opt, mode, print_info, specific=specific)
     if opt.get('splits_redefine_path', ''):
-        dataset.set_splits_by_json_path(opt['splits_redefine_path']) 
+        dataset.set_splits_by_json_path(opt['splits_redefine_path'])
     return DataLoader(
-        dataset, 
-        batch_size=opt["batch_size"], 
-        shuffle=True if mode=='train' else False
-        #shuffle=False
-        )
+        dataset,
+        batch_size=opt["batch_size"],
+        shuffle=True if mode == 'train' else False
+        # shuffle=False
+    )
+
 
 def to_sentence(hyp, vocab=None, break_words=[Constants.EOS, Constants.PAD], skip_words=[], add_eos=False):
     sent = []
@@ -338,29 +173,31 @@ def to_sentence(hyp, vocab=None, break_words=[Constants.EOS, Constants.PAD], ski
             word = str(word_id)
         else:
             word = vocab[word_id]
-        #if word == Constants.UNK_WORD:
+        # if word == Constants.UNK_WORD:
         #    word = '-'
         sent.append(word)
     if add_eos:
         sent.append(Constants.EOS_WORD)
     return ' '.join(sent)
 
+
 def remove_repeat_n_grame(sent, n):
     length = len(sent)
     rec = {}
     result_sent = []
-    for i in range(length-n+1):
-        key = ' '.join(sent[i:i+n])
+    for i in range(length - n + 1):
+        key = ' '.join(sent[i:i + n])
         if key in rec.keys():
             dis = i - rec[key] - n
-            if dis in [0,1]:
-                result_sent += sent[:i-dis]
-                if i+n <length:
-                    result_sent += sent[i+n:]
+            if dis in [0, 1]:
+                result_sent += sent[:i - dis]
+                if i + n < length:
+                    result_sent += sent[i + n:]
                 return result_sent, False
         else:
             rec[key] = i
     return sent, True
+
 
 def duplicate(sent):
     sent = sent.split(' ')
@@ -383,15 +220,16 @@ def cal_gt_n_gram(data, vocab, splits, n=1):
     gram_count = {}
     gt_sents = {}
     for i in splits['train']:
-        k = 'video%d'% int(i)
+        k = 'video%d' % int(i)
         caps = data[k]
         for tmp in caps:
             cap = [vocab[wid] for wid in tmp[1:-1]]
             gt_sents[' '.join(cap)] = gt_sents.get(' '.join(cap), 0) + 1
-            for j in range(len(cap)-n+1):
-                key = ' '.join(cap[j:j+n])
+            for j in range(len(cap) - n + 1):
+                key = ' '.join(cap[j:j + n])
                 gram_count[key] = gram_count.get(key, 0) + 1
     return gram_count, gt_sents
+
 
 def cal_n_gram(data, n=1):
     gram_count = {}
@@ -403,10 +241,11 @@ def cal_n_gram(data, n=1):
             cap = data[k][i]['caption'].split(' ')
             ave_length += len(cap)
             count += 1
-            for j in range(len(cap)-n+1):
-                key = ' '.join(cap[j:j+n])
+            for j in range(len(cap) - n + 1):
+                key = ' '.join(cap[j:j + n])
                 gram_count[key] = gram_count.get(key, 0) + 1
-    return gram_count, sents, ave_length/count, count
+    return gram_count, sents, ave_length / count, count
+
 
 def analyze_length_novel_unique(gt_data, data, vocab, splits, n=1, calculate_novel=True):
     novel_count = 0
@@ -417,12 +256,10 @@ def analyze_length_novel_unique(gt_data, data, vocab, splits, n=1, calculate_nov
             if k1 not in gt_sents.keys():
                 novel_count += 1
 
-    
-
     novel = novel_count / hy_count
     unique = len(hy_sents.keys()) / hy_count
     vocabulary_usage = len(hy_res.keys())
-    
+
     import spacy
     from collections import Counter
     nlp = spacy.load('en_core_web_sm')
@@ -439,9 +276,13 @@ def analyze_length_novel_unique(gt_data, data, vocab, splits, n=1, calculate_nov
     gram4, _, _, _ = cal_n_gram(data, n=4)
     return ave_length, novel, unique, vocabulary_usage, hy_res, len(gram4)
 
-def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False, teacher_model=None, length_crit=None, 
-    no_score=False, save_videodatainfo=False,  saved_with_pickle=False, pickle_path=None, dict_mapping={}, analyze=False, collect_best_candidate_iterative_results=False, collect_path=None, 
-    write_time=False, save_embs=False, save_to_spice=False, calculate_novel=True, evaluate_iterative_results=False, update_gram4=False, extra_opt={}):
+
+def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False,
+             teacher_model=None, length_crit=None,
+             no_score=False, save_videodatainfo=False, saved_with_pickle=False, pickle_path=None, dict_mapping={},
+             analyze=False, collect_best_candidate_iterative_results=False, collect_path=None,
+             write_time=False, save_embs=False, save_to_spice=False, calculate_novel=True,
+             evaluate_iterative_results=False, update_gram4=False, extra_opt={}):
     opt.update(extra_opt)
     model.eval()
     if teacher_model is not None:
@@ -477,7 +318,7 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
     all_time = 0
     if save_embs:
         import h5py
-        word_to_ix = {k:v for v, k in vocab.items()}
+        word_to_ix = {k: v for v, k in vocab.items()}
         embs_pth = './collect_embs'
         if not os.path.exists(embs_pth):
             os.makedirs(embs_pth)
@@ -485,21 +326,25 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
         embs_db = h5py.File(os.path.join(embs_pth, embs_db_name), 'a')
         index_set = defaultdict(set)
 
-    #target_sent = "a man is playing a video game"
-    #target_count = 0
-    #unique_sent = set()
+    # target_sent = "a man is playing a video game"
+    # target_count = 0
+    # unique_sent = set()
 
     for data in tqdm(loader, ncols=150, leave=True):
         with torch.no_grad():
-            encoder_outputs, category, labels, feats_t = get_forword_results(opt, model, data, device=device, only_data=True, vocab=vocab)
+            encoder_outputs, category, labels, feats_t = get_forword_results(opt, model, data, device=device,
+                                                                             only_data=True, vocab=vocab)
             if teacher_model is not None:
-                teacher_encoder_outputs, _, _, _ = get_forword_results(opt, teacher_model, data, device=device, only_data=True, vocab=vocab)
+                teacher_encoder_outputs, _, _, _ = get_forword_results(opt, teacher_model, data, device=device,
+                                                                       only_data=True, vocab=vocab)
             else:
                 teacher_encoder_outputs = None
 
             if opt['batch_size'] == 1:
                 start_time = time.time()
-            all_hyp, all_scores = translator.translate_batch(encoder_outputs, category, labels, vocab, teacher_encoder_outputs=teacher_encoder_outputs, tags=feats_t)
+            all_hyp, all_scores = translator.translate_batch(encoder_outputs, category, labels, vocab,
+                                                             teacher_encoder_outputs=teacher_encoder_outputs,
+                                                             tags=feats_t)
             if opt['batch_size'] == 1:
                 all_time += (time.time() - start_time)
 
@@ -517,7 +362,7 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
         for k, hyps in enumerate(all_hyp):
             video_id = video_ids[k]
             samples[video_id] = []
-            if not no_score: 
+            if not no_score:
                 assert len(hyps) == 1
 
             for j, hyp in enumerate(hyps):
@@ -526,20 +371,20 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
                     sent, _ = duplicate(sent)
                 if print_sent:
                     tqdm.write(video_id + ': ' + sent)
-                    #sent, res = duplicate(sent)
-                    #tqdm.write(video_id + ': ' + res)
-                    #tqdm.write(video_id + ': ' + sent)
+                    # sent, res = duplicate(sent)
+                    # tqdm.write(video_id + ': ' + res)
+                    # tqdm.write(video_id + ': ' + sent)
                 samples[video_id].append({'image_id': video_id, 'caption': sent})
 
-                #if target_sent in sent:
+                # if target_sent in sent:
                 #    target_count += 1
                 #    print(video_id)
-                #unique_sent.add(sent)
+                # unique_sent.add(sent)
 
                 if vatex:
                     vatex_samples[vid_to_id[video_id]] = sent
 
-                #if len(sent.split(' ')) <= 3:
+                # if len(sent.split(' ')) <= 3:
                 #    continue
                 if save_to_spice:
                     tmp2 = []
@@ -549,7 +394,8 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
                     spice_res.append(tmp)
 
                 if save_videodatainfo:
-                    refs[video_id].append({'image_id': video_id, 'cap_id': len(refs[video_id]), 'caption': sent, 'score': all_scores[k][j]})
+                    refs[video_id].append({'image_id': video_id, 'cap_id': len(refs[video_id]), 'caption': sent,
+                                           'score': all_scores[k][j]})
 
         if collect_best_candidate_iterative_results:
             assert isinstance(all_scores, tuple)
@@ -557,22 +403,23 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
             all_score = all_scores[1].tolist()
 
             if len(video_ids) != len(all_sents):
-                video_ids = np.array(data['video_ids'])[:, np.newaxis].repeat(opt['length_beam_size'], axis=1).reshape(-1)
+                video_ids = np.array(data['video_ids'])[:, np.newaxis].repeat(opt['length_beam_size'], axis=1).reshape(
+                    -1)
                 assert len(video_ids) == len(all_sents)
 
             for k, (hyps, scores) in enumerate(zip(all_sents, all_score)):
-                #video_id = video_ids[k]
+                # video_id = video_ids[k]
 
                 video_id = video_ids[k]
                 pre_sent_len = 0
-                assert len(hyps) == len(scores)  
+                assert len(hyps) == len(scores)
 
                 for j, (hyp, score) in enumerate(zip(hyps, scores)):
                     sent = to_sentence(hyp, vocab)
                     if save_embs:
                         utils.get_words_with_specified_tags(word_to_ix, sent, index_set[video_id])
 
-                    if not pre_sent_len: 
+                    if not pre_sent_len:
                         pre_sent_len = len(sent.split(' '))
                     else:
                         assert len(sent.split(' ')) == pre_sent_len
@@ -584,14 +431,14 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
                         repetition_rate_results[j][n_gram][0] += repetition_rate_result[n_gram][0]
                         repetition_rate_results[j][n_gram][1] += repetition_rate_result[n_gram][1]
                     '''
-                    #best_candidate_sents[j].append([video_id, sent])
-                    #best_candidate_score[j].append([video_id, score])
+                    # best_candidate_sents[j].append([video_id, sent])
+                    # best_candidate_score[j].append([video_id, score])
                     best_candidate_sents[video_id].append(sent)
                     best_candidate_score[video_id].append(score)
 
-    #print(target_sent)
-    #print(target_count)
-    #print(list(unique_sent))
+    # print(target_sent)
+    # print(target_count)
+    # print(list(unique_sent))
 
     if evaluate_iterative_results:
         assert collect_best_candidate_iterative_results
@@ -605,8 +452,8 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
             samples = {}
             for key in keylist:
                 samples[key] = []
-                samples[key].append({'image_id': key, 'caption': best_candidate_sents[key][i]})     
-            
+                samples[key].append({'image_id': key, 'caption': best_candidate_sents[key][i]})
+
             with suppress_stdout_stderr():
                 valid_score, detail_scores = scorer.score(gts, samples, samples.keys())
                 b4.append(valid_score["Bleu_4"])
@@ -617,16 +464,17 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
         print(m)
         print(r)
         print(c)
-        #exit()
+        # exit()
         no_score = True
-
 
     if save_to_spice:
         pth = './spice_json'
         if not os.path.exists(pth):
             os.makedirs(pth)
         if opt['na']:
-            filename = '%s_%s_%s%s_lbs%d_i%d.json'%(opt['dataset'], opt['method'], 'AE' if opt['nv_scale'] else '', opt['paradigm'], opt['length_beam_size'], opt['iterations'])
+            filename = '%s_%s_%s%s_lbs%d_i%d.json' % (
+            opt['dataset'], opt['method'], 'AE' if opt['nv_scale'] else '', opt['paradigm'], opt['length_beam_size'],
+            opt['iterations'])
         else:
             filename = '%s_%d.json' % (opt['dataset'], opt['beam_size'])
         json.dump(spice_res, open(os.path.join(pth, filename), 'w'))
@@ -642,43 +490,50 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
         assert collect_path is not None
         if not save_embs:
             pickle.dump(
-                    [best_candidate_sents, best_candidate_score],
-                    open(collect_path, 'wb')
-                )
+                [best_candidate_sents, best_candidate_score],
+                open(collect_path, 'wb')
+            )
 
     if opt['batch_size'] == 1:
-        latency = all_time/len(loader)
+        latency = all_time / len(loader)
 
         if write_time:
             f = open('latency.txt', 'a')
             if opt['ar']:
-                f.write('AR%d %s %.1f\n'%(opt['beam_size'], opt['dataset'], 1000*latency))
+                f.write('AR%d %s %.1f\n' % (opt['beam_size'], opt['dataset'], 1000 * latency))
             else:
-                f.write('NA %s %s %s %s %d%s%d %.1f\n'%(opt['method'], opt['dataset'], 'AE' if opt['nv_scale'] else '_', opt['paradigm'], opt['length_beam_size'], ' ' if opt['paradigm']=='mp' else (" %d "%opt['q']), opt['iterations'], 1000*latency))
+                f.write('NA %s %s %s %s %d%s%d %.1f\n' % (
+                opt['method'], opt['dataset'], 'AE' if opt['nv_scale'] else '_', opt['paradigm'],
+                opt['length_beam_size'], ' ' if opt['paradigm'] == 'mp' else (" %d " % opt['q']), opt['iterations'],
+                1000 * latency))
 
-        print(latency, len(loader))            
+        print(latency, len(loader))
 
     res = {}
     if analyze:
-        ave_length, novel, unique, usage, hy_res, gram4 = analyze_length_novel_unique(loader.dataset.captions, samples, vocab, splits=loader.dataset.splits, n=1, calculate_novel=calculate_novel)
+        ave_length, novel, unique, usage, hy_res, gram4 = analyze_length_novel_unique(loader.dataset.captions, samples,
+                                                                                      vocab,
+                                                                                      splits=loader.dataset.splits, n=1,
+                                                                                      calculate_novel=calculate_novel)
         if update_gram4:
             res.update({'gram4': gram4})
-        res.update({'ave_length': ave_length, 'novel': novel, 'unique': unique, 'usage': usage})   
+        res.update({'ave_length': ave_length, 'novel': novel, 'unique': unique, 'usage': usage})
 
     if not no_score:
         with suppress_stdout_stderr():
             valid_score, detail_scores = scorer.score(gts, samples, samples.keys())
 
-        #json.dump(detail_scores, open('./nacf_ctmp_b6i5_135.json', 'w'))
-        #json.dump(detail_scores, open('./nab_mp_b6i5_135.json', 'w'))
-        #json.dump(detail_scores, open('./arb_b5.json', 'w'))
-        #json.dump(detail_scores, open('./arb2_b5.json', 'w'))
+        # json.dump(detail_scores, open('./nacf_ctmp_b6i5_135.json', 'w'))
+        # json.dump(detail_scores, open('./nab_mp_b6i5_135.json', 'w'))
+        # json.dump(detail_scores, open('./arb_b5.json', 'w'))
+        # json.dump(detail_scores, open('./arb2_b5.json', 'w'))
 
-        #print(detail_scores)
+        # print(detail_scores)
         res.update(valid_score)
         res['loss'] = 0
         if write_time:
-            f.write("B4: %.2f\tM: %.2f\tR: %.2f\tC: %.2f\n" % (100 * res["Bleu_4"], 100 * res['METEOR'], 100 * res["ROUGE_L"], 100 * res["CIDEr"]))
+            f.write("B4: %.2f\tM: %.2f\tR: %.2f\tC: %.2f\n" % (
+            100 * res["Bleu_4"], 100 * res['METEOR'], 100 * res["ROUGE_L"], 100 * res["CIDEr"]))
 
         metric_sum = opt.get('metric_sum', [1, 1, 1, 1])
         res['Sum'] = 0
@@ -689,7 +544,7 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
         if json_path:
             if not os.path.exists(json_path):
                 os.makedirs(json_path)
-            #print('364 364 364 364')
+            # print('364 364 364 364')
             with open(os.path.join(json_path, json_name), 'w') as prediction_results:
                 json.dump({"predictions": samples, "scores": valid_score}, prediction_results)
                 prediction_results.close()
@@ -698,20 +553,20 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
             length = len(sent)
             rec = {}
             dd_count = 0
-            for i in range(length-n+1):
-                key = ' '.join(sent[i:i+n])
+            for i in range(length - n + 1):
+                key = ' '.join(sent[i:i + n])
                 if key in rec.keys():
                     dd_count += 1
                 else:
                     rec[key] = i
-            return dd_count, length-n+1
+            return dd_count, length - n + 1
 
         dc, ac = 0, 0
         for key in samples.keys():
             tmp_dc, tmp_ac = calculate_repetition_rate(samples[key][0]['caption'].split(' '), n=1)
             dc += tmp_dc
             ac += tmp_ac
-        #print('1-gram repetition rate: %.2f' % (100 * dc / ac))
+        # print('1-gram repetition rate: %.2f' % (100 * dc / ac))
 
         return res
 
@@ -732,12 +587,15 @@ def run_eval(opt, model, crit, loader, vocab, device, json_path='', json_name=''
 
             pickle.dump(refs, open(pth, 'wb'))
             tqdm.write('Teacher videodatainfo has been saved to %s' % pth)
-            cmd = 'python msvd_prepross.py -tdc %s -ori_wct %d -topk %d' % (opt['dataset'], opt['word_count_threshold'], opt['topk'])
+            cmd = 'python msvd_prepross.py -tdc %s -ori_wct %d -topk %d' % (
+            opt['dataset'], opt['word_count_threshold'], opt['topk'])
             os.system(cmd)
 
     return res
-    
-def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, json_path='', json_name='', scorer=COCOScorer(), print_sent=False, no_score=False, analyze=False):
+
+
+def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, json_path='', json_name='',
+                      scorer=COCOScorer(), print_sent=False, no_score=False, analyze=False):
     assert len(models) == len(opt_list)
     assert len(models) == len(loader_list)
     translator = Translator_ensemble(model=models, opt=opt)
@@ -745,7 +603,7 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, j
     gts = loader_list[0].dataset.get_references()
     samples = {}
     sentences = []
-    
+
     loader_list = [iter(item) for item in loader_list]
     while True:
         with torch.no_grad():
@@ -764,7 +622,8 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, j
             enc_hidden = []
 
             for i, model in enumerate(models):
-                encoder_outputs, category, *_ = get_forword_results(opt_list[i], model, data_list[i], device=device, only_data=True)
+                encoder_outputs, category, *_ = get_forword_results(opt_list[i], model, data_list[i], device=device,
+                                                                    only_data=True)
                 enc_output.append(encoder_outputs['enc_output'])
                 enc_hidden.append(encoder_outputs['enc_hidden'])
 
@@ -779,7 +638,7 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, j
         for k, hyps in enumerate(all_hyp):
             video_id = video_ids[k]
             samples[video_id] = []
-            if not no_score: 
+            if not no_score:
                 assert len(hyps) == 1
             index = 0
             for j, hyp in enumerate(hyps):
@@ -794,7 +653,7 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, j
                 sentences.append({'caption': sent, 'video_id': video_id, 'sen_id': index})
                 index += 1
     res = {}
-    #if analyze:
+    # if analyze:
     #    gt_caption = json.load(open(opt['caption_json']))
     #    ave_length, novel, unique, usage, hy_res = analyze_length_novel_unique(gt_caption, samples, n=1, dataset=opt['dataset'])
     #    res.update({'ave_length': ave_length, 'novel': novel, 'unique': unique, 'usage': usage})   
@@ -815,31 +674,25 @@ def run_eval_ensemble(opt, opt_list, models, crit, loader_list, vocab, device, j
         if json_path:
             if not os.path.exists(json_path):
                 os.makedirs(json_path)
-            #print('364 364 364 364')
+            # print('364 364 364 364')
             with open(os.path.join(json_path, json_name), 'w') as prediction_results:
                 json.dump({"predictions": samples, "scores": valid_score}, prediction_results)
                 prediction_results.close()
         return res
 
     return None
-        
+
+
 def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_crit=None, epoch=-1, bd=False):
     model.train()
     crit.reset_loss_recorder()
 
     for data in tqdm(loader, ncols=150, leave=False):
         optimizer.zero_grad()
-        
-        if opt.get('use_rl', False):
-            results = get_forward_results_rl(opt, model, data, device, loader.dataset.get_vocab(), loader.dataset.get_preprocessed_references()) #loader.dataset.get_references())
-        else:
-            func = get_forword_results_bd if bd else get_forword_results
-            vocab = None if bd else loader.dataset.get_vocab()
-            results = func(opt, model, data, device=device, only_data=False, vocab=vocab)
-        
-        loss = crit.get_loss(results,epoch=epoch)
+        vocab = loader.dataset.get_vocab()
+        results = get_forword_results(opt, model, data, device=device, only_data=False, vocab=vocab)
+        loss = crit.get_loss(results, epoch=epoch)
         loss.backward()
-
         clip_grad_value_(model.parameters(), opt['grad_clip'])
         optimizer.step()
 
@@ -848,9 +701,10 @@ def run_train(opt, model, crit, optimizer, loader, device, logger=None, length_c
         logger.write_text('\t'.join(['%10s: %05.3f' % (item[0], item[1]) for item in zip(name, loss_info)]))
     return loss_info if bd else loss_info[0]
 
-def get_teacher_prob(epoch, ss_k = 100, linear = [200, 0.7], piecewise = [150, 0.95, 0.7], ss_type=1, max_epoch=500):
+
+def get_teacher_prob(epoch, ss_k=100, linear=[200, 0.7], piecewise=[150, 0.95, 0.7], ss_type=1, max_epoch=500):
     if ss_type == 0:
-        res = ss_k / (ss_k + math.exp(epoch/ss_k))
+        res = ss_k / (ss_k + math.exp(epoch / ss_k))
     elif ss_type == 1:
         if epoch >= max_epoch:
             return linear[1]
@@ -858,7 +712,7 @@ def get_teacher_prob(epoch, ss_k = 100, linear = [200, 0.7], piecewise = [150, 0
         b = linear[1] - max_epoch * slope
         res = slope * epoch + b
     else:
-        a = (piecewise[1] - 1) / piecewise[0]**2
+        a = (piecewise[1] - 1) / piecewise[0] ** 2
         slope = (piecewise[2] - piecewise[1]) / (max_epoch - piecewise[0])
         b = piecewise[2] - max_epoch * slope
 
@@ -868,6 +722,7 @@ def get_teacher_prob(epoch, ss_k = 100, linear = [200, 0.7], piecewise = [150, 0
             res = slope * epoch + b
     return res
 
+
 def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     model.to(device)
     optimizer = get_optimizer(opt, model)
@@ -875,27 +730,29 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
 
     folder_path = os.path.join(opt["checkpoint_path"], 'tmp_models')
     best_model = k_PriorityQueue(
-        k_best_model = opt.get('k_best_model', 5), 
-        folder_path = folder_path,
-        standard = opt.get('standard', ['METEOR', 'CIDEr']),
-        init_res = opt.get('init_res', {})
-        )
+        k_best_model=opt.get('k_best_model', 5),
+        folder_path=folder_path,
+        standard=opt.get('standard', ['METEOR', 'CIDEr']),
+        init_res=opt.get('init_res', {})
+    )
 
-    #train_loader = get_loader(opt, 'train', print_info=False)
+    # train_loader = get_loader(opt, 'train', print_info=False)
     vali_loader = get_loader(opt, 'validate', print_info=False)
     test_loader = get_loader(opt, 'test', print_info=False)
     vocab = vali_loader.dataset.get_vocab()
     logger = CsvLogger(
-        filepath=opt["checkpoint_path"], 
-        filename='trainning_record.csv', 
-        fieldsnames=['epoch', 'train_loss', 'val_loss', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum']
-        )
+        filepath=opt["checkpoint_path"],
+        filename='trainning_record.csv',
+        fieldsnames=['epoch', 'train_loss', 'val_loss', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L',
+                     'CIDEr', 'Sum']
+    )
 
     if opt['decoder_type'] == 'NARFormer':
         opt['length_beam_size'] = 5
         opt['beam_alpha'] = 1.0
         opt['iterations'] = 5
-        if opt['method'] == 'direct' or opt['method'] == 'signal' or opt['method'] == 'signal3' or opt['method'] == 'signal2':
+        if opt['method'] == 'direct' or opt['method'] == 'signal' or opt['method'] == 'signal3' or opt[
+            'method'] == 'signal2':
             opt['iterations'] = 3
 
         if opt['dataset'] in ['VATEX', 'MSRVTT']:
@@ -913,24 +770,25 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
             os.makedirs(folder_path)
 
         for epoch in tqdm(range(opt['epochs']), ncols=150, leave=False):
-            if epoch < start_epoch: 
-                continue 
+            if epoch < start_epoch:
+                continue
 
             if epoch == start_epoch and opt.get('eval_first', False):
                 new_opt = opt.copy()
                 new_opt.update(opt.get('rl_opt', {}))
-                res = run_eval(new_opt, model, crit, vali_loader, vocab, device, print_sent=opt.get('print_sent', False))
+                res = run_eval(new_opt, model, crit, vali_loader, vocab, device,
+                               print_sent=opt.get('print_sent', False))
                 _, info = best_model.check(res, '', '', opt)
                 logger.write_text(info)
 
             train_loader = get_loader(opt, 'train', print_info=False)
-            #train_loader.dataset.shuffle()
+            # train_loader.dataset.shuffle()
             # decide the masking probability
             if opt['scheduled_sampling']:
-                opt['teacher_prob'] = get_teacher_prob(epoch+1, opt['ss_k'], opt['ss_linear'], opt['ss_piecewise'], opt['ss_type'], max_epoch=opt.get('ss_epochs', opt['epochs']))
+                opt['teacher_prob'] = get_teacher_prob(epoch + 1, opt['ss_k'], opt['ss_linear'], opt['ss_piecewise'],
+                                                       opt['ss_type'], max_epoch=opt.get('ss_epochs', opt['epochs']))
                 train_loader.dataset.mask_prob = opt['teacher_prob']
-            
-            
+
             # training
             '''
             if opt.get('use_rl', False):
@@ -944,25 +802,25 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
 
             train_loss = run_train(opt, model, crit, optimizer, train_loader, device, logger=logger, epoch=epoch)
 
-            
-            #if not opt.get('use_rl', False):
+            # if not opt.get('use_rl', False):
             optimizer.epoch_update_learning_rate()
 
             # logging
             if epoch < opt['start_eval_epoch'] - 1:
                 save_checkpoint(
-                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': {}}, 
-                        False, 
-                        filepath=opt["checkpoint_path"], 
-                        filename='checkpoint.pth.tar'
-                    )
-            elif (epoch+1) % opt["save_checkpoint_every"] == 0:
+                    {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': {}},
+                    False,
+                    filepath=opt["checkpoint_path"],
+                    filename='checkpoint.pth.tar'
+                )
+            elif (epoch + 1) % opt["save_checkpoint_every"] == 0:
                 if opt.get('use_rl', False):
                     new_opt = opt.copy()
                     new_opt.update(opt.get('rl_opt', {}))
                 else:
                     new_opt = opt
-                res = run_eval(new_opt, model, crit, vali_loader, vocab, device, print_sent=opt.get('print_sent', False))
+                res = run_eval(new_opt, model, crit, vali_loader, vocab, device,
+                               print_sent=opt.get('print_sent', False))
                 res['train_loss'] = train_loss
                 res['epoch'] = epoch
                 res['val_loss'] = res['loss']
@@ -970,12 +828,12 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
                 logger.write(res)
 
                 save_checkpoint(
-                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': res}, 
-                        False, 
-                        filepath=opt["checkpoint_path"], 
-                        filename='checkpoint.pth.tar'
-                    )
-                
+                    {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': res},
+                    False,
+                    filepath=opt["checkpoint_path"],
+                    filename='checkpoint.pth.tar'
+                )
+
                 model_name = 'model_%04d.pth.tar' % res['epoch']
                 model_path = os.path.join(folder_path, model_name)
                 not_break, info = best_model.check(res, model_path, model_name, opt)
@@ -983,7 +841,7 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
                     # reach the tolerence
                     break
                 logger.write_text(info)
-                             
+
     results_path = os.path.join(opt["checkpoint_path"], 'best')
     if not os.path.exists(results_path):
         os.makedirs(results_path)
@@ -996,7 +854,8 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     shutil.rmtree(folder_path)
 
 
-def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device, beam_alpha_set=[0, 0.5, 0.75, 1]):
+def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device,
+            beam_alpha_set=[0, 0.5, 0.75, 1]):
     length = min([best_model.qsize(), opt['k_best_model']])
 
     teacher_model_path = ""
@@ -1005,14 +864,14 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
     all_test_res = []
     all_model_path = []
     best_idx = -1
-    
+
     for i in tqdm(range(length), ncols=150, leave=False):
         node = best_model.get()
         best_res = node.res
         best_model_path = node.model_path
 
         checkpoint = torch.load(best_model_path, 'cpu')
-        #assert best_res == checkpoint['validate_result']
+        # assert best_res == checkpoint['validate_result']
 
         model.load_state_dict(checkpoint['state_dict'])
         # bs5 test results
@@ -1020,15 +879,18 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
         opt['beam_alpha'] = 1.0
 
         vali_bs1_ba1 = run_eval(opt, model, crit, vali_loader, vocab, device)
-        res = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path, json_name='%d_bs1.json'%(best_res['epoch']), analyze=True)
+        res = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path,
+                       json_name='%d_bs1.json' % (best_res['epoch']), analyze=True)
 
         res['Vali_Sum'] = vali_bs1_ba1['Sum']
         res['epoch'] = best_res['epoch']
         res['beam_size'] = '1'
         res['beam_alpha'] = str(1)
         res['id'] = str(i)
-        loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv', 
-            fieldsnames=['id', 'Vali_Sum', 'epoch', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum', 'loss', 'beam_size', 'beam_alpha', 'novel', 'unique', 'usage', 'ave_length'])
+        loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv',
+                                fieldsnames=['id', 'Vali_Sum', 'epoch', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4',
+                                             'METEOR', 'ROUGE_L', 'CIDEr', 'Sum', 'loss', 'beam_size', 'beam_alpha',
+                                             'novel', 'unique', 'usage', 'ave_length'])
         loop_logger.write(res)
 
         # bs1 validatation and test results
@@ -1039,7 +901,9 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
         for beam_alpha in beam_alpha_set:
             opt['beam_alpha'] = beam_alpha
             vali_result = run_eval(opt, model, crit, vali_loader, vocab, device)
-            test_result = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path, json_name='%d_bs5_ba%d.json'%(best_res['epoch'], int(100 * opt['beam_alpha'])), analyze=True)
+            test_result = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path,
+                                   json_name='%d_bs5_ba%d.json' % (best_res['epoch'], int(100 * opt['beam_alpha'])),
+                                   analyze=True)
             test_result['Vali_Sum'] = vali_result['Sum']
             test_result['epoch'] = best_res['epoch']
             test_result['beam_size'] = '5'
@@ -1047,8 +911,12 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
             test_result['id'] = str(i)
             loop_logger.write(test_result)
 
-            tqdm.write('Vali\t%3.2f\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (beam_alpha, vali_result['Sum'] * 100, vali_result['Bleu_4'] * 100, vali_result['METEOR'] * 100, vali_result['ROUGE_L'] * 100, vali_result['CIDEr'] * 100))
-            tqdm.write('Test\t%3.2f\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (beam_alpha, test_result['Sum'] * 100, test_result['Bleu_4'] * 100, test_result['METEOR'] * 100, test_result['ROUGE_L'] * 100, test_result['CIDEr'] * 100))
+            tqdm.write('Vali\t%3.2f\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (
+            beam_alpha, vali_result['Sum'] * 100, vali_result['Bleu_4'] * 100, vali_result['METEOR'] * 100,
+            vali_result['ROUGE_L'] * 100, vali_result['CIDEr'] * 100))
+            tqdm.write('Test\t%3.2f\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (
+            beam_alpha, test_result['Sum'] * 100, test_result['Bleu_4'] * 100, test_result['METEOR'] * 100,
+            test_result['ROUGE_L'] * 100, test_result['CIDEr'] * 100))
             vali_res_record.append(vali_result)
             vali_sum_record.append(vali_result['Sum'])
             test_res_record.append(test_result)
@@ -1057,19 +925,19 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
         test_sum_record.insert(0, res['Sum'])
         test_sum_record = ["%06d" % int(item * 1e5) for item in test_sum_record]
         test_sum_record.insert(0, "%04d" % best_res['epoch'])
-        results_model_name = '_'.join(test_sum_record) +'.pth.tar'
+        results_model_name = '_'.join(test_sum_record) + '.pth.tar'
         tqdm.write(results_model_name)
-        #shutil.copy(best_model_path, os.path.join(results_path, results_model_name))
+        # shutil.copy(best_model_path, os.path.join(results_path, results_model_name))
         save_checkpoint(
-                {'epoch': checkpoint['epoch'], 
-                'state_dict': checkpoint['state_dict'], 
-                'validate_result': vali_res_record, 
-                'test_result': test_res_record, 
-                'settings': opt}, 
-                False, 
-                filepath=results_path, 
-                filename=results_model_name
-            )
+            {'epoch': checkpoint['epoch'],
+             'state_dict': checkpoint['state_dict'],
+             'validate_result': vali_res_record,
+             'test_result': test_res_record,
+             'settings': opt},
+            False,
+            filepath=results_path,
+            filename=results_model_name
+        )
         os.remove(best_model_path)
 
         all_epoch.append(best_res['epoch'])
@@ -1090,14 +958,17 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
 
     for k in range(len(all_test_res[best_idx])):
         res = all_test_res[best_idx][k]
-        tqdm.write('%5.2f\t%4.2f &%4.2f &%4.2f &%4.2f' % (res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100, res['CIDEr'] * 100))
+        tqdm.write('%5.2f\t%4.2f &%4.2f &%4.2f &%4.2f' % (
+        res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100, res['CIDEr'] * 100))
 
 
 def test_na(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device):
     length = min([best_model.qsize(), opt['k_best_model']])
 
-    loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv', 
-            fieldsnames=['Vali_Sum', 'id', 'epoch', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum', 'loss', 'iterations', 'lbs', 'beam_alpha', 'novel', 'unique', 'usage', 'ave_length'])
+    loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv',
+                            fieldsnames=['Vali_Sum', 'id', 'epoch', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR',
+                                         'ROUGE_L', 'CIDEr', 'Sum', 'loss', 'iterations', 'lbs', 'beam_alpha', 'novel',
+                                         'unique', 'usage', 'ave_length'])
 
     for i in tqdm(range(length), ncols=150, leave=False):
         node = best_model.get()
@@ -1105,15 +976,16 @@ def test_na(best_model, results_path, opt, model, crit, vali_loader, test_loader
         best_model_path = node.model_path
 
         checkpoint = torch.load(best_model_path, 'cpu')
-        #assert best_res == checkpoint['validate_result']
+        # assert best_res == checkpoint['validate_result']
 
-        results_model_name = ['%04d'%best_res['epoch'], '%06d'%int(best_res['Sum'] * 1e5)]
+        results_model_name = ['%04d' % best_res['epoch'], '%06d' % int(best_res['Sum'] * 1e5)]
         model.load_state_dict(checkpoint['state_dict'])
         for iterations in [1, 2, 3, 5, 10]:
             opt['iterations'] = iterations
-            res = run_eval(opt, model, crit, test_loader, vocab, device, 
-                json_path=results_path, json_name='%d_lbs5_ba%d_i%d.json'%(best_res['epoch'], int(100 * opt['beam_alpha']), opt['iterations']), 
-                teacher_model=None, dict_mapping=None, analyze=True)
+            res = run_eval(opt, model, crit, test_loader, vocab, device,
+                           json_path=results_path, json_name='%d_lbs5_ba%d_i%d.json' % (
+                best_res['epoch'], int(100 * opt['beam_alpha']), opt['iterations']),
+                           teacher_model=None, dict_mapping=None, analyze=True)
             res['Vali_Sum'] = best_res['Sum']
             res['id'] = str(i)
             res['epoch'] = best_res['epoch']
@@ -1121,22 +993,25 @@ def test_na(best_model, results_path, opt, model, crit, vali_loader, test_loader
             res['lbs'] = opt['length_beam_size']
             res['beam_alpha'] = opt['beam_alpha']
             loop_logger.write(res)
-            tqdm.write('Iterations: %2d\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (iterations, res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100, res['CIDEr'] * 100))
-            results_model_name.append('%06d'%int(res['Sum'] * 1e5))
-
+            tqdm.write('Iterations: %2d\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (
+            iterations, res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100,
+            res['CIDEr'] * 100))
+            results_model_name.append('%06d' % int(res['Sum'] * 1e5))
 
         results_model_name = '_'.join(results_model_name) + '.pth.tar'
         tqdm.write(results_model_name)
-        save_checkpoint({'epoch': checkpoint['epoch'], 'state_dict': checkpoint['state_dict'], 'validate_result': checkpoint['validate_result'],
-                         'test_result': res, 'settings': opt}, 
-                         False, filepath=results_path, filename=results_model_name)
+        save_checkpoint({'epoch': checkpoint['epoch'], 'state_dict': checkpoint['state_dict'],
+                         'validate_result': checkpoint['validate_result'],
+                         'test_result': res, 'settings': opt},
+                        False, filepath=results_path, filename=results_model_name)
         os.remove(best_model_path)
+
 
 def test_vatex(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device):
     length = min([best_model.qsize(), opt['k_best_model']])
 
-    loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv', 
-                fieldsnames=['id', 'epoch', 'novel', 'unique', 'usage', 'ave_length'])
+    loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv',
+                            fieldsnames=['id', 'epoch', 'novel', 'unique', 'usage', 'ave_length'])
 
     for i in tqdm(range(length), ncols=150, leave=False):
         node = best_model.get()
@@ -1154,26 +1029,28 @@ def test_vatex(best_model, results_path, opt, model, crit, vali_loader, test_loa
         else:
             opt['beam_size'] = 5
             opt['beam_alpha'] = 1.0
-        res = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path, json_name='%04d.json'%(best_res['epoch']), 
-            analyze=True, no_score=True)
+        res = run_eval(opt, model, crit, test_loader, vocab, device, json_path=results_path,
+                       json_name='%04d.json' % (best_res['epoch']),
+                       analyze=True, no_score=True)
 
         res['epoch'] = best_res['epoch']
         res['id'] = str(i)
         loop_logger.write(res)
 
-        results_model_name = ["%04d" % best_res['epoch'], '%06d' % int(1e5 * best_res['Sum']), '%06d' % int(1e5 * best_res['CIDEr'])]
+        results_model_name = ["%04d" % best_res['epoch'], '%06d' % int(1e5 * best_res['Sum']),
+                              '%06d' % int(1e5 * best_res['CIDEr'])]
         results_model_name = '_'.join(results_model_name) + '.pth.tar'
         tqdm.write(results_model_name)
         save_checkpoint(
-                {'epoch': checkpoint['epoch'], 
-                'state_dict': checkpoint['state_dict'], 
-                'validate_result': best_res, 
-                'test_result': res, 
-                'settings': opt}, 
-                False, 
-                filepath=results_path, 
-                filename=results_model_name
-            )
+            {'epoch': checkpoint['epoch'],
+             'state_dict': checkpoint['state_dict'],
+             'validate_result': best_res,
+             'test_result': res,
+             'settings': opt},
+            False,
+            filepath=results_path,
+            filename=results_model_name
+        )
         os.remove(best_model_path)
 
 
@@ -1208,7 +1085,7 @@ def prepare_training_data(opt, pickle_path, wtoi, path_to_save):
         for j, idx in enumerate(index):
             print(key, j, sent[key][idx]['caption'])
             caps.append(sent2idx(sent[key][idx]['caption'], wtoi))
-            labels.append(tmp if j < num_positive else (tmp-1))
+            labels.append(tmp if j < num_positive else (tmp - 1))
             tmp -= 1
         data['caption'][key] = caps
         data['label'][key] = labels
@@ -1222,7 +1099,6 @@ def prepare_training_data(opt, pickle_path, wtoi, path_to_save):
     #         samples[key].append({'image_id': key, 'caption': sent[key][index]['caption']})
     #     valid_score, detail_scores = scorer.score(gts, samples, samples.keys())
     # print(valid_score)
-
 
 
 def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
@@ -1240,26 +1116,26 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
         'topk': int(opt['bd_parameters'][1]),
         'beam_alpha': opt['bd_parameters'][2],
     }
-    name = '%d_%d_%03d' % (extra_opt['beam_size'], extra_opt['topk'], int(100*extra_opt['beam_alpha']))
+    name = '%d_%d_%03d' % (extra_opt['beam_size'], extra_opt['topk'], int(100 * extra_opt['beam_alpha']))
 
     pickle_path = os.path.join(opt['checkpoint_path'], 'pickle_file')
-    path_to_save = os.path.join(pickle_path, 'training_data_%s.pkl'%name)
+    path_to_save = os.path.join(pickle_path, 'training_data_%s.pkl' % name)
 
     opt['use_beam_decoder'] = False
     if not os.path.exists(path_to_save):
-        if not os.path.exists(pickle_path): 
+        if not os.path.exists(pickle_path):
             os.makedirs(pickle_path)
-        
-        pickle_path = os.path.join(pickle_path, '%s.pkl'%name)
+
+        pickle_path = os.path.join(pickle_path, '%s.pkl' % name)
 
         if not os.path.exists(pickle_path):
             run_eval(opt, model, None, loader, vocab, device,
-                    no_score=True, 
-                    save_videodatainfo=True,
-                    saved_with_pickle=True, 
-                    pickle_path=pickle_path,
-                    extra_opt=extra_opt
-                )
+                     no_score=True,
+                     save_videodatainfo=True,
+                     saved_with_pickle=True,
+                     pickle_path=pickle_path,
+                     extra_opt=extra_opt
+                     )
         prepare_training_data(opt, pickle_path, wtoi, path_to_save)
     opt['use_beam_decoder'] = True
     opt['bd_training_data'] = path_to_save
@@ -1273,16 +1149,17 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
 
     folder_path = os.path.join(opt["checkpoint_path"], 'tmp_models')
     best_model = k_PriorityQueue(
-        k_best_model = opt.get('k_best_model', 5), 
-        folder_path = folder_path,
-        standard = opt.get('standard', ['METEOR', 'CIDEr'])
-        )
+        k_best_model=opt.get('k_best_model', 5),
+        folder_path=folder_path,
+        standard=opt.get('standard', ['METEOR', 'CIDEr'])
+    )
 
     logger = CsvLogger(
-        filepath=opt["checkpoint_path"], 
-        filename='trainning_record.csv', 
-        fieldsnames=['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr', 'Sum']
-        )
+        filepath=opt["checkpoint_path"],
+        filename='trainning_record.csv',
+        fieldsnames=['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4',
+                     'METEOR', 'ROUGE_L', 'CIDEr', 'Sum']
+    )
 
     opt['beam_size'] = 5
     opt['beam_alpha'] = 1.0
@@ -1296,41 +1173,42 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
             os.makedirs(folder_path)
 
         for epoch in tqdm(range(opt['epochs']), ncols=150, leave=False):
-            if epoch < start_epoch: 
-                continue 
+            if epoch < start_epoch:
+                continue
 
-            # training BD
-            train_loss, train_acc = run_train(opt, model, crit, optimizer, train_loader_bd, device, epoch=epoch, bd=True)
+                # training BD
+            train_loss, train_acc = run_train(opt, model, crit, optimizer, train_loader_bd, device, epoch=epoch,
+                                              bd=True)
             # evaluate BD
             vali_loss, vali_acc = run_eval_bd(opt, model, crit, vali_loader_bd, device)
             logger.write_text("epoch %d (lr=%g)\t\tTrain (%.2f, %.2f)\t\tValid (%.2f, %.2f)" \
-                % (epoch, optimizer.get_lr(), train_loss, train_acc, vali_loss, vali_acc))
+                              % (epoch, optimizer.get_lr(), train_loss, train_acc, vali_loss, vali_acc))
 
             optimizer.epoch_update_learning_rate()
-            
+
             # logging
             if epoch < opt['start_eval_epoch'] - 1:
                 save_checkpoint(
-                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': {}}, 
-                        False, 
-                        filepath=opt["checkpoint_path"], 
-                        filename='checkpoint.pth.tar'
-                    )
-            elif (epoch+1) % opt["save_checkpoint_every"] == 0:
+                    {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': {}},
+                    False,
+                    filepath=opt["checkpoint_path"],
+                    filename='checkpoint.pth.tar'
+                )
+            elif (epoch + 1) % opt["save_checkpoint_every"] == 0:
                 res = run_eval(opt, model, crit, vali_loader, vocab, device)
-                for k, v in zip(['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc'], 
+                for k, v in zip(['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc'],
                                 [epoch, train_loss, train_acc, vali_loss, vali_acc]):
                     res[k] = v
                 res.pop('loss')
                 logger.write(res)
 
                 save_checkpoint(
-                        {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': res}, 
-                        False, 
-                        filepath=opt["checkpoint_path"], 
-                        filename='checkpoint.pth.tar'
-                    )
-                
+                    {'epoch': epoch + 1, 'state_dict': model.state_dict(), 'validate_result': res},
+                    False,
+                    filepath=opt["checkpoint_path"],
+                    filename='checkpoint.pth.tar'
+                )
+
                 model_name = 'model_%04d.pth.tar' % res['epoch']
                 model_path = os.path.join(folder_path, model_name)
                 not_break, info = best_model.check(res, model_path, model_name, opt)
@@ -1338,9 +1216,7 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
                     # reach the tolerence
                     break
                 logger.write_text(info)
-            
-    
-    
+
     results_path = os.path.join(opt["checkpoint_path"], 'best')
     if not os.path.exists(results_path):
         os.makedirs(results_path)
@@ -1351,41 +1227,3 @@ def train_beam_decoder(opt, model, device, first_evaluate_whole_folder=False):
         func = test_na if opt['na'] else test_ar
     func(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device, beam_alpha_set=[1])
     shutil.rmtree(folder_path)
-    
-
-def run_eval_bd(opt, model, crit, loader, device):
-    model.eval()
-    crit.reset_loss_recorder()
-    res = []
-    lab = []
-    for data in tqdm(loader, ncols=150, leave=False):
-        results = get_forword_results_bd(opt, model, data, device=device)
-        res.append(results['pred_beam'])
-        lab.append(results['beam'])
-
-        #loss = crit.get_loss(results)
-    #name, loss_info = crit.get_loss_info()
-
-    pred_choice = torch.cat(res, dim=0).cpu().max(dim=-1)[1]
-    target = torch.cat(lab, dim=0).cpu()
-    target = target.gt(0).long()
-    #print(pred_choice.shape, target.shape)
-    # TP    predict 和 label 同时为1
-    TP = ((pred_choice == 1) & (target == 1)).cpu().sum().float()
-    # TN    predict 和 label 同时为0
-    TN = ((pred_choice == 0) & (target == 0)).cpu().sum().float()
-    # FN    predict 0 label 1
-    FN = ((pred_choice == 0) & (target == 1)).cpu().sum().float()
-    # FP    predict 1 label 0
-    FP = ((pred_choice == 1) & (target == 0)).cpu().sum().float()
-
-    #print(TP, TN, FN, FP)
-    p = TP / (TP + FP)
-    r = TP / (TP + FN)
-    #print(p, r)
-    F1 = 2 * r * p / (r + p)
-    acc = (TP + TN) / (TP + TN + FP + FN)
-    tqdm.write('%d\t%d\t%d\t%d'%(TP, FP, TN, FN))
-    tqdm.write('P: %.2f\tR: %.2f\tF1: %.2f\tAcc: %.2f'%(100*p, 100*r, 100*F1, 100*acc))
-
-    return [0, F1]

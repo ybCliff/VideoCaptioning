@@ -2,12 +2,11 @@ import torch
 import torch.nn as nn
 
 class Joint_Representaion_Learner(nn.Module):
-    def __init__(self, feats_size, fusion_type, with_bn=True, opt={}):
+    def __init__(self, feats_size, fusion_type, with_bn=True):
         super(Joint_Representaion_Learner, self).__init__()
         self.feats_size = feats_size if isinstance(feats_size, list) else [feats_size]
         self.fusion_type = fusion_type
         self.with_bn = with_bn
-        self.opt = opt
         self._check_if_parameters_valid()
 
         if self.fusion_type == 'mean':
