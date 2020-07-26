@@ -843,7 +843,7 @@ def train_network_all(opt, model, device, first_evaluate_whole_folder=False):
     if opt['dataset'].lower() == 'vatex':
         func = test_vatex
     else:
-        func = test_na if opt['na'] else test_ar
+        func = test_ar
     func(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device)
     shutil.rmtree(folder_path)
 
@@ -955,50 +955,6 @@ def test_ar(best_model, results_path, opt, model, crit, vali_loader, test_loader
         tqdm.write('%5.2f\t%4.2f &%4.2f &%4.2f &%4.2f' % (
         res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100, res['CIDEr'] * 100))
 
-
-def test_na(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device):
-    length = min([best_model.qsize(), opt['k_best_model']])
-
-    loop_logger = CsvLogger(filepath=results_path, filename='test_scores.csv',
-                            fieldsnames=['Vali_Sum', 'id', 'epoch', 'Bleu_1', 'Bleu_2', 'Bleu_3', 'Bleu_4', 'METEOR',
-                                         'ROUGE_L', 'CIDEr', 'Sum', 'loss', 'iterations', 'lbs', 'beam_alpha', 'novel',
-                                         'unique', 'usage', 'ave_length'])
-
-    for i in tqdm(range(length), ncols=150, leave=False):
-        node = best_model.get()
-        best_res = node.res
-        best_model_path = node.model_path
-
-        checkpoint = torch.load(best_model_path, 'cpu')
-        # assert best_res == checkpoint['validate_result']
-
-        results_model_name = ['%04d' % best_res['epoch'], '%06d' % int(best_res['Sum'] * 1e5)]
-        model.load_state_dict(checkpoint['state_dict'])
-        for iterations in [1, 2, 3, 5, 10]:
-            opt['iterations'] = iterations
-            res = run_eval(opt, model, crit, test_loader, vocab, device,
-                           json_path=results_path, json_name='%d_lbs5_ba%d_i%d.json' % (
-                best_res['epoch'], int(100 * opt['beam_alpha']), opt['iterations']),
-                           teacher_model=None, dict_mapping=None, analyze=True)
-            res['Vali_Sum'] = best_res['Sum']
-            res['id'] = str(i)
-            res['epoch'] = best_res['epoch']
-            res['iterations'] = opt['iterations']
-            res['lbs'] = opt['length_beam_size']
-            res['beam_alpha'] = opt['beam_alpha']
-            loop_logger.write(res)
-            tqdm.write('Iterations: %2d\t%5.2f\t%4.2f\t%4.2f\t%4.2f\t%4.2f' % (
-            iterations, res['Sum'] * 100, res['Bleu_4'] * 100, res['METEOR'] * 100, res['ROUGE_L'] * 100,
-            res['CIDEr'] * 100))
-            results_model_name.append('%06d' % int(res['Sum'] * 1e5))
-
-        results_model_name = '_'.join(results_model_name) + '.pth.tar'
-        tqdm.write(results_model_name)
-        save_checkpoint({'epoch': checkpoint['epoch'], 'state_dict': checkpoint['state_dict'],
-                         'validate_result': checkpoint['validate_result'],
-                         'test_result': res, 'settings': opt},
-                        False, filepath=results_path, filename=results_model_name)
-        os.remove(best_model_path)
 
 
 def test_vatex(best_model, results_path, opt, model, crit, vali_loader, test_loader, vocab, device):

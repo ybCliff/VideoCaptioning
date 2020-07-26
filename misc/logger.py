@@ -1,9 +1,6 @@
 import csv
 import os
 import shutil
-import json
-import matplotlib
-from matplotlib import pyplot as plt
 import numpy as np
 from queue import PriorityQueue
 from tqdm import tqdm
@@ -48,75 +45,6 @@ class CsvLogger:
             f.write('{}\n'.format(text))
         if print_t:
             tqdm.write(text)
-
-    def plot_progress_loss(self, title, loop_num):
-        plt.figure(figsize=(9, 8), dpi=300)
-        plt.plot(self.data['train_loss'], label='Training')
-        plt.plot(self.data['val_loss'], label='Validation')
-        plt.title('{} for {}'.format("loss", title))
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.xlim(0, len(self.data['train_loss']) + 1)
-        plt.savefig(os.path.join(self.log_path, '{}_loss.png'.format(loop_num)))
-
-    def plot_all_metrics(self, title, loop_num):
-        plt.figure(figsize=(9, 8), dpi=300)
-        plt.plot(self.data['Bleu_4'], label='Bleu_4')
-        _str = 'Bleu_4'
-        plt.plot((0, len(self.data[_str])),
-                 (np.max(self.data[_str]), np.max(self.data[_str])), 'r--',
-                 label='Best {} ({:.2f}%)'.format(_str, 100. * np.max(self.data[_str])))
-
-        plt.plot(self.data['METEOR'], label='METEOR')
-        _str = 'METEOR'
-        plt.plot((0, len(self.data[_str])),
-                 (np.max(self.data[_str]), np.max(self.data[_str])), 'r--',
-                 label='Best {} ({:.2f}%)'.format(_str, 100. * np.max(self.data[_str])))
-
-        plt.plot(self.data['ROUGE_L'], label='ROUGE_L')
-        _str = 'ROUGE_L'
-        plt.plot((0, len(self.data[_str])),
-                 (np.max(self.data[_str]), np.max(self.data[_str])), 'r--',
-                 label='Best {} ({:.2f}%)'.format(_str, 100. * np.max(self.data[_str])))
-
-        plt.plot(self.data['CIDEr'], label='CIDEr')
-        _str = 'CIDEr'
-        plt.plot((0, len(self.data[_str])),
-                 (np.max(self.data[_str]), np.max(self.data[_str])), 'r--',
-                 label='Best {} ({:.2f}%)'.format(_str, 100. * np.max(self.data[_str])))
-
-        plt.title('{} for {}'.format("All metrics", title))
-        plt.xlabel('Epoch')
-        plt.ylabel('Performance')
-        plt.legend()
-        plt.xlim(0, len(self.data['Bleu_4']) + 1)
-        plt.savefig(os.path.join(self.log_path, '{}_metrics.png'.format(loop_num)))
-
-    def plot_single_metric(self, title, _str, loop_num):
-        plt.figure(figsize=(9, 8), dpi=300)
-
-        plt.plot(self.data[_str], label=_str)
-        plt.plot((0, len(self.data[_str])),
-                 (np.max(self.data[_str]), np.max(self.data[_str])), 'r--',
-                 label='Best {} ({:.2f}%)'.format(_str, 100. * np.max(self.data[_str])))
-        plt.title('{} for {}'.format(_str, title))
-        plt.xlabel('Epoch')
-        plt.ylabel(_str)
-        plt.legend()
-        plt.xlim(0, len(self.data[_str]) + 1)
-        plt.savefig(os.path.join(self.log_path, '{}_{}.png'.format(loop_num, _str)))
-
-    def plot_progress(self, title, loop_num):
-        self.plot_all_metrics(title, loop_num)
-        self.plot_progress_loss(title, loop_num)
-        
-        self.plot_single_metric(title, "Bleu_4", loop_num)
-        self.plot_single_metric(title, "METEOR", loop_num)
-        self.plot_single_metric(title, "ROUGE_L", loop_num)
-        self.plot_single_metric(title, "CIDEr", loop_num)
-        
-        plt.close('all')
 
 
 class AverageMeter(object):
