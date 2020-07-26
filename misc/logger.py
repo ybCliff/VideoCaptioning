@@ -9,6 +9,7 @@ from queue import PriorityQueue
 from tqdm import tqdm
 import torch
 
+
 class CsvLogger:
     def __init__(self, filepath='./', filename='validate_record.csv', data=None, fieldsnames=['epoch', 'train_loss', 'val_loss', 'Bleu_4', 'METEOR', 'ROUGE_L', 'CIDEr']):
         self.log_path = filepath

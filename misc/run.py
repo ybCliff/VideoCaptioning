@@ -6,23 +6,18 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import numpy as np
 import json
-from misc.cocoeval import suppress_stdout_stderr, COCOScorer
-import misc.utils as utils
-from dataloader import VideoDataset, BD_Dataset
-from collections import OrderedDict
-
+from collections import OrderedDict, defaultdict
 import math
+import pickle
+import time
 
-from models.Translator import Translator, Translator_ensemble
-import models.Constants as Constants
-
+from misc import utils
+from .cocoeval import suppress_stdout_stderr, COCOScorer
 from .optim import get_optimizer
 from .crit import get_criterion
 from .logger import CsvLogger, k_PriorityQueue
-
-from collections import defaultdict
-import pickle
-import time
+from models import Translator, Translator_ensemble, Constants
+from dataloader import VideoDataset
 
 
 def save_checkpoint(state, is_best, filepath='./', filename='checkpoint.pth.tar', best_model_name='model_best.pth.tar'):
@@ -150,8 +145,7 @@ global_model = None
 
 
 def get_loader(opt, mode, print_info=False, specific=-1, target_ratio=-1, bd=False):
-    func = BD_Dataset if bd else VideoDataset
-    dataset = func(opt, mode, print_info, specific=specific)
+    dataset = VideoDataset(opt, mode, print_info, specific=specific)
     if opt.get('splits_redefine_path', ''):
         dataset.set_splits_by_json_path(opt['splits_redefine_path'])
     return DataLoader(

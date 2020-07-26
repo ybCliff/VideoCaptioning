@@ -4,7 +4,7 @@ from .encoder import Input_Embedding_Layer, Visual_Oriented_Encoder, MLP, Encode
 from .fusion import Joint_Representaion_Learner
 from .decoder import LSTM_Decoder, Top_Down_Decoder
 from .seq2seq import Seq2Seq
-
+from .Translator import Translator, Translator_ensemble
 
 def get_preEncoder(opt):
     '''

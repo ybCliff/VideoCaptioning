@@ -6,7 +6,6 @@ import os
 import models.Constants as Constants
 
 
-
 def set_seed(seed=2019):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -15,12 +14,6 @@ def set_seed(seed=2019):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic=True
 
-def set_seed_test(seed=2019):
-    #random.seed(seed)
-    #os.environ['PYTHONHASHSEED'] = str(seed)
-    #np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
 
 # Input: seq, N*D numpy array, with element 0 .. vocab_size. 0 is END token.
 def decode_sequence(ix_to_word, seq):

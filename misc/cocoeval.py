@@ -5,7 +5,6 @@ using coco-caption repo https://github.com/tylin/coco-caption
 class COCOScorer is taken from https://github.com/yaoli/arctic-capgen-vid
 '''
 
-import json
 import os
 from coco import Bleu, Rouge, Cider, Meteor, PTBTokenizer
 # Define a context manager to suppress stdout and stderr.
@@ -162,7 +161,6 @@ class COCOBLEUScorer(object):
                 self.imgToEval[imgId] = {}
                 self.imgToEval[imgId]["image_id"] = imgId
             self.imgToEval[imgId][method] = score
-
 
 
 def score(ref, sample):
